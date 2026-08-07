@@ -69,6 +69,7 @@ function adminUsers(){
                       :'<span class="chip c-red"><span class="d"></span>Deactivated</span>')+'</td>'+
       '<td class="num"><button class="btn sm" data-act="edituser" data-uid="'+u.id+'" data-role="'+esc(u.role)+'" '+
         'data-name="'+esc(u.full_name||u.email)+'">Change role</button> '+
+        '<button class="btn sm" data-act="sendreset" data-email="'+esc(u.email)+'">Reset password</button> '+
         '<button class="btn sm" data-act="toggleuser" data-uid="'+u.id+'" data-on="'+(u.active?"0":"1")+'">'+
         (u.active?"Deactivate":"Reactivate")+'</button></td></tr>';
   }).join("");
@@ -79,13 +80,15 @@ function adminUsers(){
       '<td style="font-size:12.5px;color:var(--muted)">invited '+dOnly(i.created_at)+'</td></tr>'; }).join("");
 
   return '<div class="card-b"><div class="banner b-violet" style="margin-bottom:0"><div class="ico">&#128273;</div><div>'+
-    '<b>Admin is deliberately not a settlement actor</b>This account creates people and sets roles. It cannot build a statement, '+
+    '<b>Admin is deliberately not a settlement actor</b>This account creates logins and sets roles. It cannot build a statement, '+
     'answer a point, approve, or move money. Someone who can hand out permissions should not also be able to use them.</div></div></div>'+
     '<table><thead><tr><th>Person</th><th>Role</th><th>Scope</th><th>Status</th>'+
-    '<th class="num"><button class="btn sm primary" data-act="invite">Invite someone</button></th></tr></thead>'+
+    '<th class="num"><button class="btn sm primary" data-act="createlogin">Create a login</button></th></tr></thead>'+
     '<tbody>'+(rows||'<tr><td colspan="5" class="empty">No one yet.</td></tr>')+'</tbody></table>'+
-    (inv ? '<div class="card-b" style="border-top:1px solid var(--line-2)"><h3 style="font-size:14px;margin-bottom:4px">Invited, not signed in yet</h3>'+
-      '<div class="hint">They get in by choosing <b>Set my password</b> on the sign-in screen with this exact email.</div></div>'+
+    (inv ? '<div class="card-b" style="border-top:1px solid var(--line-2)">'+
+      '<h3 style="font-size:14px;margin-bottom:4px">Started but not finished</h3>'+
+      '<div class="hint">A role was reserved for these email addresses but the account was not created &mdash; usually because '+
+      '<b>Create a login</b> was interrupted. Run it again with the same email and it will pick this up.</div></div>'+
       '<table><tbody>'+inv+'</tbody></table>' : '');
 }
 
@@ -304,7 +307,7 @@ document.addEventListener("click", async function(e){
   if(a==="open"){ e.preventDefault(); await openStatement(D("id")); return; }
 
   /* ---- auth ---- */
-  if(a==="signin" || a==="signup-first" || a==="signup-invited"){
+  if(a==="signin" || a==="signup-first"){
     var email = val("g-email"), pass = val("g-pass");
     if(!email || !pass){ S.err="Enter your email and password."; return viewSignIn(a==="signup-first"); }
     busy(true, "signing in...");
@@ -549,27 +552,143 @@ document.addEventListener("click", async function(e){
   }
 
   /* ---- admin: people ---- */
-  if(a==="invite"){
-    modal("Invite someone",
-      '<div class="fld"><label class="fl">Full name</label><input class="inp" id="i-name"></div>'+
-      '<div class="fld"><label class="fl">Email</label><input class="inp" id="i-email" type="email"></div>'+
+  if(a==="createlogin"){
+    modal("Create a login",
+      '<div class="fld"><label class="fl">Full name</label><input class="inp" id="i-name" placeholder="e.g. Ramesh Chand"></div>'+
+      '<div class="fld"><label class="fl">Email</label><input class="inp" id="i-email" type="email" autocomplete="off"></div>'+
       '<div class="fld"><label class="fl">Role</label><select class="inp" id="i-role">'+
-        ROLE_ORDER.map(function(r){ return '<option value="'+r+'">'+esc(ROLE_LABEL[r])+' &mdash; '+esc(ROLE_NOTE[r])+'</option>'; }).join("")+
+        ROLE_ORDER.map(function(r){
+          return '<option value="'+r+'">'+esc(ROLE_LABEL[r])+' &mdash; '+esc(ROLE_NOTE[r])+'</option>'; }).join("")+
         '</select></div>'+
       '<div class="fld"><label class="fl">If a vendor login, which vendor?</label>'+
-        '<select class="inp" id="i-vendor"><option value="">— not a vendor login —</option>'+vendorOptions()+'</select></div>'+
+        '<select class="inp" id="i-vendor"><option value="">&mdash; not a vendor login &mdash;</option>'+
+        vendorOptions()+'</select></div>'+
+      '<div class="fld"><label class="fl">Password to give them</label>'+
+        '<input class="inp" id="i-pass" value="'+tempPassword()+'">'+
+        '<div class="hint">Generated for you. Change it if you prefer. They can set their own from '+
+        '<b>Change password</b> once they are in.</div></div>'+
       '<div class="banner b-blue" style="margin:0"><div class="ico">&#9432;</div><div>'+
-      'They set their own password by choosing <b>Set my password</b> on the sign-in screen with this exact email. '+
-      'Until they do, and until this invite exists, that account can see nothing at all.</div></div>',
+      'This creates the account outright and shows you the credentials to pass on. '+
+      'You stay signed in as yourself the whole time.</div></div>',
       '<button class="btn" data-act="closemodal">Cancel</button>'+
-      '<button class="btn primary" data-act="invite-go">Send invitation</button>');
+      '<button class="btn primary" data-act="createlogin-go">Create the login</button>');
     return;
   }
-  if(a==="invite-go"){
-    var vend = val("i-vendor");
-    var rI = await call("vs_invite", {p_email:val("i-email"), p_name:val("i-name"),
-      p_role:val("i-role"), p_vendor: vend||null}, "Invited", "saving...");
-    if(rI.ok){ closeModal(); await refresh(false); }
+  if(a==="createlogin-go"){
+    /* read every field BEFORE anything can close the modal, or the credentials
+       card ends up showing a blank password */
+    var cName = val("i-name"), cEmail = val("i-email").toLowerCase(),
+        cRole = val("i-role"), cVendor = val("i-vendor"), cPass = val("i-pass");
+    if(!cName){ toast("Enter their name"); return; }
+    if(!cEmail || cEmail.indexOf("@") < 1){ toast("Enter a valid email address"); return; }
+    if(cPass.length < 8){ toast("The password needs at least 8 characters"); return; }
+    if(cRole === "vendor" && !cVendor){ toast("A vendor login must be tied to a vendor"); return; }
+    if(cRole !== "vendor" && cVendor){ toast("Only a vendor login can be tied to a vendor"); return; }
+    if(S.profiles.some(function(p){ return String(p.email).toLowerCase() === cEmail; })){
+      toast("Somebody already has a login with that email"); return;
+    }
+
+    /* 1. pre-authorise: this row is what tells the database which role the new
+          account gets. Without it the account is created but gets no profile
+          and can see nothing. */
+    var pre = await call("vs_invite", {p_email:cEmail, p_name:cName,
+      p_role:cRole, p_vendor: cVendor||null}, null, "preparing...");
+    if(!pre.ok) return;
+
+    /* 2. create the account on a throwaway client so the administrator's own
+          session is untouched */
+    busy(true, "creating the account...");
+    var made = false, why = "";
+    try{
+      var prov = provisionClient();
+      var up = await prov.auth.signUp({email:cEmail, password:cPass,
+                 options:{ data:{ full_name:cName } }});
+      if(up.error) throw up.error;
+      made = true;
+      try{ await prov.auth.signOut(); }catch(e){}
+    }catch(e){ why = friendly(e); }
+    finally{ busy(false); }
+
+    if(!made){
+      toast(why || "Could not create the account");
+      return;
+    }
+
+    /* 3. confirm the profile actually landed with the right role */
+    await refresh(false);
+    var got = S.profiles.filter(function(p){ return String(p.email).toLowerCase() === cEmail; })[0];
+
+    closeModal();
+    modal("Login created &mdash; pass these on",
+      (got
+        ? '<div class="banner b-green" style="margin-bottom:16px"><div class="ico">&#10003;</div><div>'+
+          '<b>'+esc(cName)+' is set up as '+esc(ROLE_LABEL[got.role])+'</b>'+
+          (got.vendor_id?'For '+esc(vendorName(got.vendor_id))+'. ':'')+
+          'They can sign in right now.</div></div>'
+        : '<div class="banner b-amber" style="margin-bottom:16px"><div class="ico">&#9888;</div><div>'+
+          '<b>The account was created, but no role landed on it</b>'+
+          'Check that <b>Confirm email</b> is switched OFF in Supabase &rarr; Authentication &rarr; Email. '+
+          'While it is on, the account is not final until they click a link, and the role is not applied. '+
+          'The credentials below still work once that is sorted.</div></div>')+
+      '<div class="decl" style="font-size:14px;line-height:1.9">'+
+        'Portal: <b id="cred-url">'+esc(location.origin + location.pathname.replace(/[^/]*$/,""))+'</b><br>'+
+        'Email: <b id="cred-email">'+esc(cEmail)+'</b><br>'+
+        'Password: <b id="cred-pass" style="font-family:ui-monospace,Menlo,Consolas,monospace">'+esc(cPass)+'</b>'+
+      '</div>'+
+      '<div class="btnrow" style="margin-top:14px">'+
+        '<button class="btn" data-act="copycred">Copy all three</button>'+
+        '<button class="btn" data-act="copypass">Copy just the password</button></div>'+
+      '<div class="hint" style="margin-top:14px">This password is shown once and is not stored anywhere you can read it back. '+
+      'Send it now. Ask them to change it from <b>Change password</b> after their first sign-in.</div>',
+      '<button class="btn primary" data-act="closemodal">Done</button>');
+    return;
+  }
+  if(a==="copycred" || a==="copypass"){
+    var g = function(id){ var el=document.getElementById(id); return el?el.textContent:""; };
+    var text = (a==="copypass") ? g("cred-pass")
+      : "WeVois Vendor Settlement\n"+g("cred-url")+"\nEmail: "+g("cred-email")+"\nPassword: "+g("cred-pass");
+    try{
+      if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); }
+      else {
+        var ta=document.createElement("textarea"); ta.value=text; document.body.appendChild(ta);
+        ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      }
+      toast("Copied");
+    }catch(e){ toast("Could not copy - select the text and copy it manually"); }
+    return;
+  }
+  if(a==="sendreset"){
+    var em = D("email");
+    busy(true, "sending...");
+    try{
+      var rr = await SB.auth.resetPasswordForEmail(em, {redirectTo: location.href});
+      if(rr && rr.error) throw rr.error;
+      toast("Reset link sent to "+em);
+    }catch(e){
+      toast("Could not send: "+friendly(e)+" - you can also reset it from Supabase, Authentication then Users.");
+    } finally { busy(false); }
+    return;
+  }
+  if(a==="changepw"){
+    modal("Change your password",
+      '<div class="fld"><label class="fl">New password</label><input class="inp" id="pw-1" type="password" autocomplete="new-password"></div>'+
+      '<div class="fld"><label class="fl">Type it again</label><input class="inp" id="pw-2" type="password" autocomplete="new-password"></div>'+
+      '<div class="hint">At least 8 characters. This changes only your own password.</div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="changepw-go">Change it</button>');
+    return;
+  }
+  if(a==="changepw-go"){
+    var p1 = val("pw-1"), p2 = val("pw-2");
+    if(p1.length < 8){ toast("At least 8 characters"); return; }
+    if(p1 !== p2){ toast("The two do not match"); return; }
+    busy(true, "changing...");
+    try{
+      var ru = await SB.auth.updateUser({password:p1});
+      if(ru && ru.error) throw ru.error;
+      closeModal(); toast("Password changed");
+    }catch(e){ toast(friendly(e)); }
+    finally{ busy(false); }
     return;
   }
   if(a==="edituser"){

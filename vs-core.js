@@ -202,6 +202,31 @@ function vendorName(id){ for(var i=0;i<S.vendors.length;i++) if(S.vendors[i].id=
 function contractsOfSite(sid){ return S.contracts.filter(function(c){ return c.site_id===sid; }); }
 function contractLabel(c){ return vendorName(c.vendor_id)+" — "+siteName(c.site_id); }
 
+/* A readable one-time password. No 0/O/1/l/I, so it survives being read out
+   over the phone or copied off a piece of paper. */
+function tempPassword(){
+  var A = "ABCDEFGHJKMNPQRSTUVWXYZ", a = "abcdefghijkmnpqrstuvwxyz", d = "23456789";
+  var pool = A + a + d, out = "";
+  var r = new Uint32Array(12);
+  (window.crypto || window.msCrypto).getRandomValues(r);
+  for(var i=0;i<12;i++) out += pool.charAt(r[i] % pool.length);
+  /* guarantee one of each kind */
+  return out.slice(0,9) + A.charAt(r[9]%A.length) + a.charAt(r[10]%a.length) + d.charAt(r[11]%d.length);
+}
+
+/* Supabase will not let one signed-in browser user create another's login on
+   the shared client - doing it there would swap the administrator's own
+   session for the new account's. So the sign-up runs on a SECOND client with
+   its own storage key and no session persistence. The administrator stays
+   signed in as themselves throughout; the new account's session is thrown away
+   the moment it is created. */
+function provisionClient(){
+  return window.supabase.createClient(window.VS_URL, window.VS_ANON, {
+    auth: { storageKey:"vs-provision", persistSession:false,
+            autoRefreshToken:false, detectSessionInUrl:false }
+  });
+}
+
 /* ====================================================================== */
 /*  AUTH GATES                                                            */
 /* ====================================================================== */
@@ -223,16 +248,16 @@ function viewSignIn(needsSetup){
   gate((S.err?'<div class="err">'+esc(S.err)+'</div>':'')+
    (needsSetup
      ? '<h1>Create the first administrator</h1>'+
-       '<p class="sub">This database is empty. The first account to sign up becomes the administrator. After that, nobody gets in without an invitation.</p>'+
+       '<p class="sub">This database is empty. The first account to sign up becomes the administrator. '+
+       'After that, only the administrator can create logins.</p>'+
        '<div class="fld"><label class="fl">Full name</label><input class="inp" id="g-name" placeholder="e.g. Priya Nair"></div>'
-     : '<h1>Sign in</h1><p class="sub">Use the email address your administrator invited.</p>')+
+     : '<h1>Sign in</h1><p class="sub">Use the email and password your administrator gave you.</p>')+
    '<div class="fld"><label class="fl">Email</label><input class="inp" id="g-email" type="email" autocomplete="username"></div>'+
    '<div class="fld"><label class="fl">Password</label><input class="inp" id="g-pass" type="password" autocomplete="current-password"></div>'+
    '<div class="btnrow"><button class="btn primary" data-act="'+(needsSetup?"signup-first":"signin")+'">'+
-     (needsSetup?"Create administrator":"Sign in")+'</button>'+
-   (needsSetup?'':'<button class="btn" data-act="signup-invited">First time? Set my password</button>')+'</div>'+
-   (needsSetup?'':'<div class="hint" style="margin-top:14px">If you have been invited but never signed in, use '+
-     '<b>Set my password</b> with the same email address.</div>'));
+     (needsSetup?"Create administrator":"Sign in")+'</button></div>'+
+   (needsSetup?'':'<div class="hint" style="margin-top:14px">No login yet? Your administrator creates it and passes you the '+
+     'password. You can change it from <b>Change password</b> once you are in.</div>'));
 }
 function viewNoProfile(){
   gate('<h1>This account is not set up yet</h1>'+

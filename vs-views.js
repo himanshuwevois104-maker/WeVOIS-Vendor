@@ -18,6 +18,7 @@ function render(){
     '<div class="spacer"></div>'+
     (S.profile.role==="vendor" ? '' : '<select class="rolesel" data-act="period" title="Month">'+msel+'</select>')+
     '<div class="whoami"><b>'+esc(S.profile.full_name||S.profile.email)+'</b>'+esc(ROLE_LABEL[S.profile.role])+'</div>'+
+    '<button class="btn sm" data-act="changepw" style="background:#1c2534;border-color:#2c3648;color:#fff">Change password</button>'+
     '<button class="btn sm" data-act="signout" style="background:#1c2534;border-color:#2c3648;color:#fff">Sign out</button>'+
     '</div></div>';
 
