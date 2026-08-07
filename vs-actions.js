@@ -13,6 +13,7 @@ var CAP_ROWS = [
   ["Raise a point", "raise"],
   ["Approve the statement", "approve"],
   ["Release payment and enter the UTR", "pay"],
+  ["Attach payroll / PF / ESIC files", "attach_docs"],
   ["Manage users and roles", "manage_users"],
   ["Manage vendors and sites", "manage_vendors"],
   ["Assign a vendor to a site", "manage_contracts"],
@@ -23,7 +24,7 @@ var CAP_ROWS = [
 var ROLE_ORDER = ["admin","manager","accounts","ceo","vp","vendor"];
 var CAPS_BY_ROLE = {
   admin:["view_all","manage_users","manage_vendors","manage_contracts","manage_settlements","manage_masters"],
-  manager:["view_all","edit_draft","share","logcall","resolve","revise","remind"],
+  manager:["view_all","edit_draft","share","logcall","resolve","revise","remind","pay"],
   accounts:["view_all","post_payroll","pay"],
   ceo:["view_all"], vp:["view_all"],
   vendor:["raise","confirm","approve"]
@@ -242,7 +243,13 @@ function adminMatrix(){
     return '<tr><td>'+esc(row[0])+'</td>'+ROLE_ORDER.map(function(r){
       if(row[1]==="view_all" && r==="vendor")
         return '<td style="text-align:center;font-size:11.5px;color:var(--muted)">own only</td>';
-      var has = CAPS_BY_ROLE[r].indexOf(row[1])>=0;
+      if(row[1]==="attach_docs" && r==="vendor")
+        return '<td style="text-align:center;font-size:11.5px;color:var(--muted)">can open them</td>';
+      /* attaching a file is not a capability of its own: whoever can fill the
+         draft or post the payroll can attach the paperwork behind it */
+      var has = row[1]==="attach_docs"
+        ? (CAPS_BY_ROLE[r].indexOf("edit_draft")>=0 || CAPS_BY_ROLE[r].indexOf("post_payroll")>=0)
+        : CAPS_BY_ROLE[r].indexOf(row[1])>=0;
       return '<td style="text-align:center" class="'+(has?"yes":"no")+'">'+(has?"&#10003;":"&middot;")+'</td>';
     }).join("")+'</tr>'; }).join("");
   return '<div class="card-b"><div class="banner b-grey" style="margin-bottom:0"><div class="ico">&#128737;</div><div>'+
@@ -547,6 +554,48 @@ document.addEventListener("click", async function(e){
       closeModal();
       toast(Number(rP.data)<=0.005 ? "Paid in full - month closed" : "Part payment recorded. Balance "+inr(rP.data));
       S.tab="payments"; await refresh(true);
+    }
+    return;
+  }
+
+  /* ---- attached files ---- */
+  if(a==="docpick"){
+    var fi = document.getElementById("doc-file");
+    if(fi){ fi.value = ""; fi.click(); }
+    return;
+  }
+  if(a==="docopen"){
+    var pth = D("p");
+    var sg = await SB.storage.from("vs-docs").createSignedUrl(pth, 120);
+    if(sg.error || !sg.data || !sg.data.signedUrl){
+      toast("Could not open that file. " + ((sg.error&&sg.error.message)||""));
+      return;
+    }
+    window.open(sg.data.signedUrl, "_blank", "noopener");
+    return;
+  }
+  if(a==="docdel"){
+    var did = D("id"), dn = D("n");
+    modal("Remove this file",
+      '<div class="banner b-amber" style="margin-bottom:14px"><div class="ico">&#9888;</div><div>'+
+      '<b>'+esc(dn)+'</b>The vendor will no longer be able to open it. The removal, and your reason, '+
+      'stay in the record permanently.</div></div>'+
+      '<div class="fld"><label class="fl">Why is it coming off?</label>'+
+        '<input class="inp" id="dd-why" placeholder="e.g. wrong month attached by mistake"></div>'+
+      '<input type="hidden" id="dd-id" value="'+esc(did)+'">',
+      '<button class="btn" data-act="closemodal">Keep it</button>'+
+      '<button class="btn danger" data-act="docdel-go">Remove the file</button>');
+    return;
+  }
+  if(a==="docdel-go"){
+    var ddid = val("dd-id"), why = val("dd-why");
+    if(!why.trim()){ toast("A reason is required."); return; }
+    var rD = await call("vs_remove_document", {p_doc:ddid, p_reason:why}, null, "removing...");
+    if(rD.ok){
+      /* the row goes first; the object is best-effort, and an orphan blob that
+         nothing points at is far better than a live row with no file */
+      try{ await SB.storage.from("vs-docs").remove([rD.data]); }catch(e){}
+      closeModal(); toast("File removed"); await refresh(true);
     }
     return;
   }
@@ -921,7 +970,67 @@ document.addEventListener("input", function(e){
     S.draft.adj[i][f] = (f==="amount") ? Number(String(el.value).replace(/[^0-9.\-]/g,"")||0) : el.value;
   }
 });
+/* ------------------------------------------------------ attaching a file */
+var DOC_MAX = 25 * 1024 * 1024;
+
+function safeName(n){
+  return String(n||"file").replace(/[^A-Za-z0-9._ -]+/g,"_").replace(/\s+/g," ").trim().slice(0,120) || "file";
+}
+function rid(){
+  try{ if(window.crypto && crypto.randomUUID) return crypto.randomUUID().slice(0,8); }catch(e){}
+  return Math.random().toString(36).slice(2,10);
+}
+function docStatus(t){
+  var el = document.getElementById("doc-status");
+  if(el) el.textContent = t || "";
+}
+
+async function uploadDoc(file){
+  if(!file || !S.open) return {ok:false};
+  if(file.size > DOC_MAX){
+    toast("That file is "+Math.round(file.size/1048576)+" MB. The limit is 25 MB.");
+    return {ok:false};
+  }
+  var kindEl = document.getElementById("doc-kind");
+  var kind = kindEl ? kindEl.value : "other";
+  var name = safeName(file.name);
+  /* the statement id is the first folder, which is what the storage policy
+     reads to decide who may open the file */
+  var path = S.open + "/" + rid() + "-" + name;
+
+  docStatus("uploading " + name + "...");
+  var up;
+  try{
+    up = await SB.storage.from("vs-docs").upload(path, file, {
+      contentType: file.type || "application/octet-stream", upsert: false });
+  }catch(err){ up = {error:err}; }
+  if(up && up.error){
+    docStatus("");
+    toast("Upload failed. " + (up.error.message || ""));
+    return {ok:false};
+  }
+
+  var r = await call("vs_add_document", {
+    p_stmt:S.open, p_path:path, p_filename:file.name,
+    p_kind:kind, p_mime:file.type||"", p_size:file.size });
+  docStatus("");
+  if(!r.ok){
+    /* the row is what the vendor reads; a blob with no row is invisible, so
+       take it back out rather than leave it lying in the bucket */
+    try{ await SB.storage.from("vs-docs").remove([path]); }catch(e){}
+    return {ok:false};
+  }
+  toast(file.name + " attached - the vendor can open it now");
+  await refresh(true);
+  return {ok:true, path:path};
+}
+
 document.addEventListener("change", async function(e){
+  if(e.target && e.target.id === "doc-file"){
+    var f = e.target.files && e.target.files[0];
+    if(f) await uploadDoc(f);
+    return;
+  }
   var el = e.target.closest ? e.target.closest("[data-act]") : null;
   if(!el) return;
   var a = el.getAttribute("data-act");
@@ -966,6 +1075,7 @@ async function boot(){
       .on("postgres_changes", {event:"*", schema:"public", table:"vs_versions"},   scheduleRefresh)
       .on("postgres_changes", {event:"*", schema:"public", table:"vs_payments"},   scheduleRefresh)
       .on("postgres_changes", {event:"*", schema:"public", table:"vs_payroll"},    scheduleRefresh)
+      .on("postgres_changes", {event:"*", schema:"public", table:"vs_documents"},  scheduleRefresh)
       .subscribe();
   }catch(e){}
 }

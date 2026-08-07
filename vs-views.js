@@ -94,7 +94,30 @@ function viewManagerHome(){
      '<div class="kpi"><div class="l">Paid to date</div><div class="v" style="color:var(--teal)">'+inr(paid)+'</div><div class="n">against approved versions only</div></div>'+
    '</div>'+
    '<div class="card"><div class="card-h"><h2>This month</h2><div class="spacer"></div><span class="sub">Click a row to open</span></div>'+
-   '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(mine)+'</tbody></table></div></div>';
+   '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(mine)+'</tbody></table></div></div>'+
+   payQueue()+
+   '<div class="card"><div class="card-h"><h2>Every month</h2><div class="spacer"></div>'+
+     '<span class="sub">'+S.list.length+' settlements across every site and month</span></div>'+
+   '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(S.list)+'</tbody></table></div></div>';
+}
+
+/* Approved but not yet fully paid, across every month - not just this one.
+   Old months are exactly the ones that get forgotten, so they go at the top
+   of their own card rather than being buried in the month you are looking at. */
+function payQueue(){
+  if(!can("pay")) return "";
+  var due = S.list.filter(function(x){ return x.status==="approved"||x.status==="part_paid"; })
+    .sort(function(a,b){ return String(a.period) < String(b.period) ? -1 : 1; });
+  if(!due.length) return "";
+  var out = due.reduce(function(a,x){
+    return a + (Number(x.approved_amount||0) - Number(x.paid_total||0)); }, 0);
+  var old = due.filter(function(x){ return String(x.period).slice(0,10) !== S.period; }).length;
+  return '<div class="card"><div class="card-h"><h2>Approved &mdash; still to pay</h2><div class="spacer"></div>'+
+    '<span class="sub">'+inr(out)+' outstanding'+(old?' &middot; '+old+' from an earlier month':'')+'</span></div>'+
+    '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(due)+'</tbody></table></div>'+
+    '<div class="card-b" style="padding-top:0"><div class="hint" style="margin:0">A payment can be entered against any '+
+    'approved month, however far back. Open the row, go to <b>Payments</b>, and put the date the money actually left '+
+    '&mdash; not today&rsquo;s date. Part payments are fine; the balance stays visible until it clears.</div></div></div>';
 }
 
 /* ----------------------------------------------------------- accounts home */
@@ -115,8 +138,10 @@ function viewAccountsHome(){
      '<span class="sub">the vendor manager cannot share until this is done</span></div>'+
      '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(toPost)+'</tbody></table></div></div>'+
    '<div class="card"><div class="card-h"><h2>Approved &mdash; awaiting payment</h2>'+
-     '<span class="sub">money can only move against a version the vendor approved</span></div>'+
-     '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(toPay)+'</tbody></table></div></div>'+
+     '<span class="sub">every month, oldest first &mdash; money can only move against a version the vendor approved</span></div>'+
+     '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+
+       listRows(toPay.slice().sort(function(a,b){ return String(a.period) < String(b.period) ? -1 : 1; }))+
+     '</tbody></table></div></div>'+
    '<div class="card"><div class="card-h"><h2>All settlements</h2><span class="sub">open any month to post a correction</span></div>'+
      '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(S.list)+'</tbody></table></div></div>';
 }
@@ -261,7 +286,8 @@ function viewStatement(){
   var op = openPoints(st);
   var tabDefs = [
     ["sheet","Statement"],
-    ["payroll","Payroll &amp; PF/ESIC"+(prPending?'<span class="cnt" style="background:var(--red)">!</span>':'')],
+    ["payroll","Payroll &amp; PF/ESIC"+(prPending?'<span class="cnt" style="background:var(--red)">!</span>'
+       :((st.documents||[]).length?'<span class="cnt" style="background:var(--faint)">&#128206;'+st.documents.length+'</span>':''))],
     ["points","Points"+((st.points||[]).length?'<span class="cnt" style="'+(op?'':'background:var(--faint)')+'">'+st.points.length+'</span>':'')],
     ["versions","Versions ("+st.versions.length+")"],
     ["payments","Payments ("+(st.payments||[]).length+")"],
@@ -503,7 +529,55 @@ function tabPayroll(){
     '<div class="fld"><label class="fl">Reason &mdash; the vendor sees this</label>'+
       (ed?'<textarea class="inp" id="not_processed_reason">'+esc(p.not_processed_reason||"")+'</textarea>'
          :'<div style="padding:7px 0;color:var(--ink-2)">'+esc(p.not_processed_reason||"—")+'</div>')+'</div>'+
+    docSection()+
     '</div>';
+}
+
+/* -------------------------------------------------------- attached files */
+var DOC_KIND = { payroll:"Payroll sheet", pf:"PF", esic:"ESIC", bill:"Bill", other:"Other" };
+
+function fileSize(n){
+  n = Number(n)||0;
+  return n >= 1048576 ? (n/1048576).toFixed(1)+" MB"
+       : n >= 1024    ? Math.round(n/1024)+" KB" : n+" bytes";
+}
+
+function docSection(){
+  var st = S.stmt, docs = st.documents || [];
+  var ed = (can("post_payroll") || can("edit_draft")) && st.statement.status !== "paid";
+
+  var rows = docs.map(function(d){
+    return '<tr>'+
+      '<td><b>'+esc(d.filename)+'</b>'+
+        '<div style="font-size:12px;color:var(--muted)">'+esc(d.uploaded_by||"")+' &middot; '+dt(d.uploaded_at)+'</div></td>'+
+      '<td><span class="chip c-blue">'+esc(DOC_KIND[d.kind]||d.kind)+'</span></td>'+
+      '<td style="font-size:12.5px;color:var(--muted)">'+fileSize(d.size_bytes)+'</td>'+
+      '<td class="num"><button class="btn sm" data-act="docopen" data-p="'+esc(d.path)+'">Open</button>'+
+        (ed?' <button class="btn sm danger" data-act="docdel" data-id="'+d.id+'" data-n="'+esc(d.filename)+'">Remove</button>':'')+
+      '</td></tr>'; }).join("");
+
+  if(!rows) rows = '<tr><td colspan="4" class="empty">'+
+    (ed ? 'Nothing attached yet. Add the payroll sheet, the PF ECR or the ESIC challan and the vendor can open it himself.'
+        : 'No file attached to this month.')+'</td></tr>';
+
+  return '<h3 style="font-size:14px;margin:22px 0 10px">Payroll, PF and ESIC files</h3>'+
+    '<div class="banner b-blue" style="margin-bottom:12px"><div class="ico">&#128206;</div><div>'+
+    '<b>The proof, attached to the month it belongs to</b>'+
+    'Excel or PDF &mdash; the payroll sheet, the PF ECR, the ESIC challan. The vendor opens them from his own copy of '+
+    'this statement, so &ldquo;send me the payroll again&rdquo; stops being a phone call. Every attachment and every removal '+
+    'is written into the record below.</div></div>'+
+    (ed ? '<div class="btnrow" style="margin-bottom:12px">'+
+          '<input type="file" id="doc-file" style="display:none" '+
+            'accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,application/pdf,image/*,'+
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">'+
+          '<select class="inp" id="doc-kind" style="width:auto;min-width:170px">'+
+            Object.keys(DOC_KIND).map(function(k){
+              return '<option value="'+k+'">'+DOC_KIND[k]+'</option>'; }).join("")+'</select>'+
+          '<button class="btn teal" data-act="docpick">Choose a file and attach</button>'+
+          '<span id="doc-status" style="font-size:12.5px;color:var(--muted)"></span>'+
+          '</div>' : "")+
+    '<table><thead><tr><th>File</th><th>Kind</th><th>Size</th><th class="num">'+
+    (ed?'Open / remove':'Open')+'</th></tr></thead><tbody>'+rows+'</tbody></table>';
 }
 
 /* ------------------------------------------------------------ tab: points */
