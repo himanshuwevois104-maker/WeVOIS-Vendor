@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101827">
+<title>WeVois — Vendor Settlement Portal</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23101827'/><circle cx='16' cy='16' r='6' fill='%234ade80'/></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="busy"></div>
+<div id="app"></div>
+<div id="modal"></div>
+<div id="toast"></div>
+
+<noscript>
+  <div style="padding:40px;font-family:system-ui">This portal needs JavaScript switched on.</div>
+</noscript>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="supabase-config.js"></script>
+<script src="vs-core.js"></script>
+<script src="vs-views.js"></script>
+<script src="vs-actions.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("sw.js").catch(function(){});
+    });
+  }
+</script>
+</body>
+</html>
