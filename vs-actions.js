@@ -24,7 +24,7 @@ var CAP_ROWS = [
 var ROLE_ORDER = ["admin","manager","accounts","ceo","vp","vendor"];
 var CAPS_BY_ROLE = {
   admin:["view_all","manage_users","manage_vendors","manage_contracts","manage_settlements","manage_masters"],
-  manager:["view_all","edit_draft","share","logcall","resolve","revise","remind","pay"],
+  manager:["view_all","edit_draft","share","logcall","resolve","revise","remind","pay","post_payroll"],
   accounts:["view_all","post_payroll","pay"],
   ceo:["view_all"], vp:["view_all"],
   vendor:["raise","confirm","approve"]
@@ -219,7 +219,7 @@ function adminHeads(){
     return '<tr class="grp-row"><td colspan="4">'+esc(st.name)+' &mdash; '+hs.length+' booking heads</td></tr>'+
       hs.map(function(h){
         return '<tr><td style="padding-left:26px">'+esc(h.label)+(h.active?'':' <span class="chip c-grey">off</span>')+'</td>'+
-          '<td>'+(h.src==="payroll"?'<span class="chip c-teal"><span class="d"></span>Posted by Accounts</span>'
+          '<td>'+(h.src==="payroll"?'<span class="chip c-teal"><span class="d"></span>From the payroll posting</span>'
                                    :'<span class="chip c-grey">Entered by Vendor Manager</span>')+'</td>'+
           '<td style="font-size:12.5px;color:var(--muted)">'+esc(h.grp)+'</td>'+
           '<td class="num"><button class="btn sm" data-act="edithead" data-hid="'+h.id+'" data-label="'+esc(h.label)+'" '+
@@ -490,7 +490,7 @@ document.addEventListener("click", async function(e){
       '<div class="pt-figs"><div>Our figure<b>'+inr(our2)+'</b></div>'+
       (claimed!==""?'<div>He says<b>'+inr(claimed)+'</b></div>':'')+'</div></div>'+
       (D("kind")==="head" ? '<div class="banner b-teal" style="margin:0 0 14px"><div class="ico">&#9203;</div><div>'+
-        'If this is a payroll head you cannot change the figure yourself &mdash; accepting means Accounts posts a correction, '+
+        'If this is a payroll head the figure does not move here &mdash; accepting means a payroll correction is posted, '+
         'which then goes out as a new version.</div></div>' : '')+
       '<label class="radio"><input type="radio" name="dec" value="accepted" checked>'+
         '<span><span class="t">Accept his figure</span><span class="d">Amount becomes '+inr(claimed!==""?claimed:our2)+'</span></span></label>'+
@@ -546,7 +546,7 @@ document.addEventListener("click", async function(e){
   }
   if(a==="approve-go"){
     var rA = await call("vs_approve", {p_stmt:S.open}, null, "approving...");
-    if(rA.ok){ closeModal(); toast("Approved "+inr(rA.data)+" - snapshot locked, now with Accounts"); S.tab="record"; await refresh(true); }
+    if(rA.ok){ closeModal(); toast("Approved "+inr(rA.data)+" - snapshot locked, now awaiting payment"); S.tab="record"; await refresh(true); }
     return;
   }
 
@@ -964,7 +964,7 @@ document.addEventListener("click", async function(e){
       '<div class="fld"><label class="fl">Month</label><input class="inp" id="ns-p" type="month" value="'+
         S.period.slice(0,7)+'"></div>'+
       '<div class="banner b-blue" style="margin:0"><div class="ico">&#9432;</div><div>'+
-      'It is created as an empty draft. Accounts posts the payroll and the vendor manager fills the rest before it can go out.</div></div>',
+      'It is created as an empty draft. The payroll is posted, the running heads are filled in, and only then can it go out.</div></div>',
       '<button class="btn" data-act="closemodal">Cancel</button>'+
       '<button class="btn primary" data-act="addsettle-go">Create settlement</button>');
     return;
@@ -1020,7 +1020,7 @@ document.addEventListener("click", async function(e){
         '<option value="staff">Staff</option><option value="esic">ESIC / PF</option><option value="other">Other</option></select></div>'+
       '<div class="fld"><label class="fl">Who enters it?</label><select class="inp" id="h-src">'+
         '<option value="manual">Vendor Manager types it</option>'+
-        '<option value="payroll">Derived from the Accounts payroll posting</option></select></div>'+
+        '<option value="payroll">Derived from the payroll posting</option></select></div>'+
       '<div class="fld"><label class="fl">Sort order</label><input class="inp num" id="h-sort" value="900"></div>',
       '<button class="btn" data-act="closemodal">Cancel</button>'+
       '<button class="btn primary" data-act="addhead-go" data-sid="'+D("sid")+'">Add head</button>');

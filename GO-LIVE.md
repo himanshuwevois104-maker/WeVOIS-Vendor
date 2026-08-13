@@ -74,7 +74,20 @@ It also gives a site its own life, separate from who runs it - the day WeVois st
 there and the day it closed. A closed site takes no vendor and no month can be opened
 for it, while everything already settled stays readable.
 
-### 3e. Note for later
+### 3e. Run the fourth patch
+
+New query. Paste and run `VS-PATCH-4.sql`. It lets the vendor manager post and correct
+the processed salary, PF and ESIC, which only Accounts could do before. It ends by
+printing `1 | 1 | 0 | 9`.
+
+The gate itself is unchanged: a statement still cannot go to a vendor until the payroll
+is posted. What changes is that you can satisfy it yourself instead of waiting. The
+challan numbers stay compulsory, a figure for salary not processed still needs a written
+reason, a correction after sharing still parks itself until you issue a new version, and
+the record names whoever actually posted it. The CEO, the VP and the vendor are still
+refused.
+
+### 3f. Note for later
 
 `VS-IMPORT-HISTORY.sql` loads your whole spreadsheet history, but it cannot run yet.
 It writes through the same functions the app uses, and those refuse anybody who is not a
@@ -187,7 +200,7 @@ does not count.
 ### 11. Run your first month
 
 1. **Admin** → Settlements → pick the month at the top right → **Open [month] for all**. One draft appears per running contract.
-2. **Accounts** opens each one, goes to the **Payroll** tab, enters the processed wages, salary, headcounts and the PF/ESIC splits, and the two challan numbers. The statement cannot go out until this is done.
+2. **You or Accounts** open each one, go to the **Payroll &amp; PF/ESIC** tab, and enter the processed wages, salary, headcounts, the PF/ESIC splits and the two challan numbers. The statement cannot go out until this is done, and whoever posts it is named on the record permanently.
 3. **You** open it, type what the partner earned in *Total Expenses Should Be Paid*, fill the running heads, add any adjustment lines — advances, direct payments, penalties, reimbursements, or anything you want recorded without it changing the amount — then **Save draft** and **Share with vendor**. That version freezes at that moment.
 4. **The vendor** signs in, checks it, and either approves or raises a point on an exact line. If he rings you instead, use **Log a point from a call** while he is still on the phone; he gets it back to confirm.
 5. **You** answer each point with a written reason, then **Issue revised statement**. The old version stays untouched beside the new one, with a list of every figure that moved and why.
@@ -223,9 +236,9 @@ written reason, and both the attachment and the removal go into the permanent re
 
 Not claims — assertions that run.
 
-**The database: 252 checks on real PostgreSQL 16, as the `authenticated` role, zero failures.** An uninvited signup reads nothing at all. A vendor sees only his own shared statements and none of his own drafts. Another vendor cannot read, query or approve a statement that is not his. The CEO and VP can read everything and every write is refused — including a direct SQL update on their own profile row to promote themselves. The manager cannot post payroll; Accounts cannot resolve a point; the CEO, the VP and the vendor himself are all refused when they try to move money. A statement cannot be shared until payroll is posted. A shared version cannot be edited by anyone, including the admin, including by direct SQL. A decision without a written reason is refused. Payment is refused without a UTR and refused if it would exceed the approved amount. The last administrator cannot be demoted or deactivated. A deleted settlement takes its versions, points and payments with it while the audit tombstone naming who, why and the UTRs survives and cannot itself be edited. An attached file can be read by the vendor it belongs to and by nobody else - not another vendor holding the exact path, not an uninvited account - and no role, including the administrator, can write a document row by direct SQL. A vendor reads only the sites he runs or has run, only his own vendor row, only his own contracts and booking heads, and only the months that have actually been sent to him; pointed straight at another vendor's statement and version with the real identifiers, every one of the nine reader functions gives him nothing, while the owner, Accounts, the CEO and the administrator all still get the right figure.
+**The database: 270 checks on real PostgreSQL 16, as the `authenticated` role, zero failures.** An uninvited signup reads nothing at all. A vendor sees only his own shared statements and none of his own drafts. Another vendor cannot read, query or approve a statement that is not his. The CEO and VP can read everything and every write is refused — including a direct SQL update on their own profile row to promote themselves. The manager cannot post payroll; Accounts cannot resolve a point; the CEO, the VP and the vendor himself are all refused when they try to move money. A statement cannot be shared until payroll is posted. A shared version cannot be edited by anyone, including the admin, including by direct SQL. A decision without a written reason is refused. Payment is refused without a UTR and refused if it would exceed the approved amount. The last administrator cannot be demoted or deactivated. A deleted settlement takes its versions, points and payments with it while the audit tombstone naming who, why and the UTRs survives and cannot itself be edited. An attached file can be read by the vendor it belongs to and by nobody else - not another vendor holding the exact path, not an uninvited account - and no role, including the administrator, can write a document row by direct SQL. A vendor reads only the sites he runs or has run, only his own vendor row, only his own contracts and booking heads, and only the months that have actually been sent to him; pointed straight at another vendor's statement and version with the real identifiers, every one of the nine reader functions gives him nothing, while the owner, Accounts, the CEO and the administrator all still get the right figure.
 
-**The app: 188 checks in a headless browser, zero JavaScript errors**, driving the whole journey — first-run bootstrap, building the org, the Nawa mid-month handover producing two April settlements with the right date ranges, the payroll gate, the gross-less-heads arithmetic, a recorded-only adjustment that does not move the figure, sharing and freezing, points on both a head and an adjustment, the phone-call confirm loop, resolve and revise with the diff, approval, part payments, the observer who can touch nothing, the loud delete with its surviving tombstone, a back-dated payment entered by the vendor manager, and the whole attachment cycle: the manager attaching a payroll sheet and an ESIC challan, a 26 MB file turned away, the vendor opening both and being refused when he tries to attach or remove one, another vendor refused the exact path, and a removal that will not go through without a reason. It also checks, as a second vendor with his own login, that his screen names one site, one vendor and one contract, that the other site's name appears nowhere on it, and that staff still read everything.
+**The app: 209 checks in a headless browser, zero JavaScript errors**, driving the whole journey — first-run bootstrap, building the org, the Nawa mid-month handover producing two April settlements with the right date ranges, the payroll gate, the gross-less-heads arithmetic, a recorded-only adjustment that does not move the figure, sharing and freezing, points on both a head and an adjustment, the phone-call confirm loop, resolve and revise with the diff, approval, part payments, the observer who can touch nothing, the loud delete with its surviving tombstone, a back-dated payment entered by the vendor manager, and the whole attachment cycle: the manager attaching a payroll sheet and an ESIC challan, a 26 MB file turned away, the vendor opening both and being refused when he tries to attach or remove one, another vendor refused the exact path, and a removal that will not go through without a reason. It also checks, as a second vendor with his own login, that his screen names one site, one vendor and one contract, that the other site's name appears nowhere on it, and that staff still read everything.
 
 ---
 

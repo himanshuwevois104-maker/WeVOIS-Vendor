@@ -78,8 +78,10 @@ function viewManagerHome(){
   S.list.forEach(function(x){ paid += Number(x.paid_total)||0; });
 
   var warn = blocked ? '<div class="banner b-teal"><div class="ico">&#9203;</div><div><b>'+blocked+
-    ' settlement'+(blocked===1?" is":"s are")+' waiting on Accounts</b>'+
-    'Processed salary and PF/ESIC have not been posted, so those heads are still zero and the statement cannot be shared.</div></div>' : "";
+    ' settlement'+(blocked===1?" is":"s are")+' waiting on a payroll posting</b>'+
+    'Processed salary and PF/ESIC have not been posted, so those heads are still zero and the statement cannot be shared. '+
+    (can("post_payroll")?'Open one and use the <b>Payroll &amp; PF/ESIC</b> tab &mdash; you can post it yourself, or leave it to Accounts.'
+                        :'Accounts or the vendor manager posts them.')+'</div></div>' : "";
 
   var empty = !S.list.length ? '<div class="banner b-blue"><div class="ico">&#9432;</div><div><b>No settlements yet</b>'+
     'Your administrator opens a month from the Administration screen, which creates one draft per vendor-site contract.</div></div>' : "";
@@ -174,7 +176,7 @@ function viewLeadership(){
    '<div class="kpis">'+
      '<div class="kpi"><div class="l">Payable this month</div><div class="v">'+inr(payable)+'</div><div class="n">current versions</div></div>'+
      '<div class="kpi"><div class="l">Held up in query</div><div class="v" style="color:var(--amber)">'+inr(inQuery)+'</div><div class="n">value not yet agreed</div></div>'+
-     '<div class="kpi"><div class="l">Approved, not paid</div><div class="v" style="color:var(--green)">'+inr(unpaid)+'</div><div class="n">with Accounts</div></div>'+
+     '<div class="kpi"><div class="l">Approved, not paid</div><div class="v" style="color:var(--green)">'+inr(unpaid)+'</div><div class="n">awaiting release</div></div>'+
      '<div class="kpi"><div class="l">Settlements</div><div class="v">'+mine.length+'</div><div class="n">vendor-site, this month</div></div>'+
    '</div>'+
    '<div class="card"><div class="card-h"><h2>Company spend per vehicle &mdash; '+esc(monthLabel(S.period))+'</h2>'+
@@ -247,9 +249,10 @@ function viewStatement(){
 
   var b = observerBanner();
   if(isDraft && prPending)
-    b += '<div class="banner b-teal"><div class="ico">&#9203;</div><div><b>Waiting on Accounts</b>'+
+    b += '<div class="banner b-teal"><div class="ico">&#9203;</div><div><b>The payroll is not posted yet</b>'+
       'Processed salary, wages and PF/ESIC have not been posted for this month, so those heads are still zero and this statement cannot be shared. '+
-      (can("post_payroll")?'Open the <b>Payroll</b> tab to post them.':'Accounts posts them from the Payroll tab.')+'</div></div>';
+      (can("post_payroll")?'Open the <b>Payroll &amp; PF/ESIC</b> tab and post them.'
+                          :'Accounts or the vendor manager posts them from the Payroll tab.')+'</div></div>';
   if(can("edit_draft") && isDraft && !prPending)
     b += '<div class="banner b-blue"><div class="ico">&#9998;</div><div><b>Draft &mdash; only WeVois can see this</b>'+
       'Enter what the partner earned and the running heads, then share. The moment you share, this version freezes: it can never be edited, '+
@@ -259,7 +262,7 @@ function viewStatement(){
       'Issue a revised statement so he sees the corrected figures and the reasons.</div>'+
       '<div style="margin-left:auto"><button class="btn primary" data-act="revise">Issue revised statement</button></div></div>';
   if(st.payroll && st.payroll.pending_fix)
-    b += '<div class="banner b-teal"><div class="ico">&#8635;</div><div><b>Accounts posted a payroll correction</b>'+
+    b += '<div class="banner b-teal"><div class="ico">&#8635;</div><div><b>A payroll correction has been posted</b>'+
       esc(st.payroll.pending_fix_why||"")+' &mdash; '+esc(st.payroll.pending_fix_by||"")+', '+dt(st.payroll.pending_fix_at)+
       '. It reaches the vendor when the next version is issued.</div></div>';
   if(S.profile.role==="vendor"){
@@ -280,7 +283,7 @@ function viewStatement(){
       st.statement.approved_version+' on '+dt(st.statement.approved_at)+'. '+
       ((st.payments||[]).length
         ? 'Paid so far '+inr(st.paid_total)+(bal>0.005?', balance outstanding '+inr(bal)+'.':' &mdash; settled in full.')
-        : 'Awaiting payment release by Accounts.')+'</div></div>';
+        : 'Approved and awaiting payment release.')+'</div></div>';
   }
 
   var op = openPoints(st);
@@ -377,7 +380,7 @@ function tabSheet(){
     rows += '<tr><td colspan="3" style="padding:12px 14px">'+adjEditor(D.adj)+
       '<div class="btnrow" style="margin-top:6px"><button class="btn sm" data-act="adj-add">+ Add an adjustment line</button></div>'+
       linked.map(function(a){
-        return '<div class="hint" style="margin-top:8px">Posted by Accounts: <b>'+esc(a.label)+'</b> '+
+        return '<div class="hint" style="margin-top:8px">From the payroll posting: <b>'+esc(a.label)+'</b> '+
           '<span class="'+effClass(a.effect)+'">'+effSign(a.effect)+inr(a.amount)+'</span>'+
           (a.note?' &mdash; '+esc(a.note):'')+'</div>'; }).join("")+
       '</td></tr>';
@@ -412,7 +415,8 @@ function tabSheet(){
   if(editable) acts.push('<button class="btn primary" data-act="savedraft">Save draft</button>');
   if(can("share") && isDraft){
     acts.push('<button class="btn go" data-act="share"'+(prPending?" disabled":"")+'>Share with vendor</button>');
-    if(prPending) acts.push('<span style="font-size:12.5px;color:var(--muted)">Blocked until Accounts posts the payroll.</span>');
+    if(prPending) acts.push('<span style="font-size:12.5px;color:var(--muted)">Blocked until the payroll is posted'+
+      (can("post_payroll")?' &mdash; the Payroll &amp; PF/ESIC tab.':'.')+'</span>');
   }
   if(canLog) acts.push('<button class="btn" data-act="logcall" data-kind="head" data-key="" data-label="">&#9742; Log a point from a call</button>');
   if(can("remind") && ["sent","under_query"].indexOf(st.statement.status)>=0)
@@ -477,8 +481,8 @@ function tabPayroll(){
       esc(p.posted_by||"")+' &middot; '+dt(p.posted_at)+
       '. These figures feed six heads and one adjustment on the statement, and are locked to every other role.</div></div>'
     : '<div class="banner b-teal"><div class="ico">&#9203;</div><div><b>Not posted yet</b>'+
-      (ed?'Enter the processed figures below and post them. The vendor manager cannot share the statement until you do.'
-         :'Accounts has not posted the processed salary and PF/ESIC for this month. The manpower heads stay at zero until they do.')+'</div></div>';
+      (ed?'Enter the processed figures below and post them. The statement cannot be shared with the vendor until they are in.'
+         :'The processed salary and PF/ESIC have not been posted for this month. The manpower heads stay at zero until they are.')+'</div></div>';
 
   var pf = (Number(p.dh_pf_ee)||0)+(Number(p.dh_pf_er)||0)+(Number(p.stf_pf_ee)||0)+(Number(p.stf_pf_er)||0);
   var es = (Number(p.dh_esic_ee)||0)+(Number(p.dh_esic_er)||0)+(Number(p.stf_esic_ee)||0)+(Number(p.stf_esic_er)||0);
