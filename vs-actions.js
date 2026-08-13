@@ -115,27 +115,52 @@ function adminVendors(){
     'Each pairing is its own tenure with its own vehicle count and its own monthly settlement, so a dispute at one site never holds up another.</div></div>';
 }
 
+function siteStatus(st){
+  var today = new Date().toISOString().slice(0,10);
+  if(st.close_date && String(st.close_date).slice(0,10) < today) return "closed";
+  if(st.start_date && String(st.start_date).slice(0,10) > today) return "not_started";
+  return "running";
+}
+var SITE_CHIP = {
+  running:'<span class="chip c-green"><span class="d"></span>running</span>',
+  closed:'<span class="chip c-grey"><span class="d"></span>closed</span>',
+  not_started:'<span class="chip c-blue"><span class="d"></span>not started yet</span>'
+};
+
 function adminSites(){
   var rows = S.sites.map(function(st){
     var cs = contractsOfSite(st.id).sort(function(a,b){ return a.from_date < b.from_date ? -1 : 1; });
     var chain = cs.length ? cs.map(function(c){
-      return '<div style="margin:2px 0">'+esc(vendorName(c.vendor_id))+
-        ' <span style="color:var(--muted)">'+dOnly(c.from_date)+' to '+(c.to_date?dOnly(c.to_date):"current")+
-        ' &middot; '+c.vehicles+' vehicles</span>'+
-        (c.to_date?'':' <span class="chip c-green"><span class="d"></span>running</span>')+'</div>'; }).join("")
+      return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0">'+
+        '<div style="flex:1">'+esc(vendorName(c.vendor_id))+
+          ' <span style="color:var(--muted)">'+dOnly(c.from_date)+' to '+(c.to_date?dOnly(c.to_date):"current")+
+          ' &middot; '+c.vehicles+' vehicles</span>'+
+          (c.to_date?'':' <span class="chip c-green"><span class="d"></span>running</span>')+'</div>'+
+        '<button class="btn sm" data-act="edittenure" data-cid="'+c.id+'">Edit</button>'+
+        (c.to_date?'<button class="btn sm" data-act="reopentenure" data-cid="'+c.id+'">Reopen</button>':'')+
+        '</div>'; }).join("")
       : '<span style="color:var(--faint)">no vendor assigned</span>';
     var live = cs.filter(function(c){ return !c.to_date; })[0];
-    return '<tr><td><b>'+esc(st.name)+'</b><div style="font-size:12px;color:var(--muted)">'+esc(st.city||"")+'</div></td>'+
+    var stat = siteStatus(st);
+    var dates = (st.start_date? 'from '+dOnly(st.start_date) : 'no start date')+
+                (st.close_date? ', closed '+dOnly(st.close_date) : '');
+    return '<tr><td><b>'+esc(st.name)+'</b> '+SITE_CHIP[stat]+
+      '<div style="font-size:12px;color:var(--muted)">'+esc(st.city||"")+'</div>'+
+      '<div style="font-size:12px;color:var(--muted)">'+dates+'</div></td>'+
       '<td>'+chain+'</td>'+
-      '<td class="num">'+
-        (live ? '<button class="btn sm" data-act="changevendor" data-sid="'+st.id+'" data-sname="'+esc(st.name)+'">Change vendor</button> '
-              : '<button class="btn sm primary" data-act="assign" data-sid="'+st.id+'" data-sname="'+esc(st.name)+'">Assign a vendor</button> ')+
+      '<td class="num" style="white-space:nowrap">'+
+        '<button class="btn sm" data-act="editsite" data-sid="'+st.id+'">Edit site</button> '+
+        (live ? '<button class="btn sm" data-act="changevendor" data-sid="'+st.id+'" data-sname="'+esc(st.name)+'">Change vendor</button>'
+              : (stat==="closed" ? ''
+                 : '<button class="btn sm primary" data-act="assign" data-sid="'+st.id+'" data-sname="'+esc(st.name)+'">Assign a vendor</button>'))+
       '</td></tr>';
   }).join("");
   return '<div class="card-b"><div class="banner b-blue" style="margin-bottom:0"><div class="ico">&#128506;</div><div>'+
     '<b>A site can change hands mid-month</b>Use <b>Change vendor</b> and give the exact day the new partner takes over. '+
     'The outgoing tenure ends the day before, and that month produces two settlements for the site &mdash; one for each vendor, '+
-    'each covering only its own days. Two vendors overlapping on one site is impossible, not merely discouraged.</div></div></div>'+
+    'each covering only its own days. Two vendors overlapping on one site is impossible, not merely discouraged.<br>'+
+    '<b>A site has its own life</b>, separate from who runs it: the day WeVois started there and the day it closed. '+
+    'A closed site cannot be assigned a vendor and no month can be opened for it. Everything already settled stays readable.</div></div></div>'+
     '<table><thead><tr><th>Site</th><th>Who has run it</th>'+
     '<th class="num"><button class="btn sm" data-act="addsite">Add a site</button></th></tr></thead>'+
     '<tbody>'+(rows||'<tr><td colspan="3" class="empty">No sites yet.</td></tr>')+'</tbody></table>';
@@ -823,6 +848,99 @@ document.addEventListener("click", async function(e){
     var rCV = await call("vs_change_vendor", {p_site:D("sid"), p_new_vendor:val("c-vendor"),
       p_vehicles:num("c-veh"), p_from:val("c-from")}, "Handover recorded");
     if(rCV.ok){ closeModal(); await refresh(false); }
+    return;
+  }
+
+  /* ---- admin: edit a site and its tenures ---- */
+  if(a==="editsite"){
+    var esid = D("sid");
+    var siteE = S.sites.filter(function(x){ return x.id===esid; })[0];
+    if(!siteE) return;
+    var csE = contractsOfSite(esid);
+    var liveE = csE.filter(function(c){ return !c.to_date; })[0];
+    modal("Edit "+esc(siteE.name),
+      '<div class="fld"><label class="fl">Site name</label>'+
+        '<input class="inp" id="es-name" value="'+esc(siteE.name)+'"></div>'+
+      '<div class="fld"><label class="fl">City</label>'+
+        '<input class="inp" id="es-city" value="'+esc(siteE.city||"")+'"></div>'+
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">Started here on</label>'+
+          '<input class="inp" id="es-start" type="date" value="'+(siteE.start_date?String(siteE.start_date).slice(0,10):"")+'">'+
+          '<div class="hint">Leave blank if you would rather not date it.</div></div>'+
+        '<div class="fld"><label class="fl">Closed on</label>'+
+          '<input class="inp" id="es-close" type="date" value="'+(siteE.close_date?String(siteE.close_date).slice(0,10):"")+'">'+
+          '<div class="hint">Blank means still running.</div></div>'+
+      '</div>'+
+      (liveE?'<div class="banner b-amber" style="margin:0 0 14px"><div class="ico">&#9888;</div><div>'+
+        '<b>'+esc(vendorName(liveE.vendor_id))+' is still running this site with no end date</b>'+
+        'To close the site, end that tenure first &mdash; use <b>Edit</b> next to it and give the last day.</div></div>':'')+
+      '<div class="banner b-blue" style="margin:0"><div class="ico">&#9432;</div><div>'+
+      'Both dates are saved exactly as they read above, so clearing one clears it. '+
+      'The start date cannot be after work already recorded here, and the closing date cannot be before it.</div></div>'+
+      '<input type="hidden" id="es-id" value="'+esc(esid)+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="editsite-go">Save the site</button>');
+    return;
+  }
+  if(a==="editsite-go"){
+    var rES = await call("vs_set_site", {
+      p_site:val("es-id"), p_name:val("es-name"), p_city:val("es-city"),
+      p_start:val("es-start")||null, p_close:val("es-close")||null });
+    if(rES.ok){ closeModal(); toast(String(rES.data)==="nothing changed"?"Nothing changed":"Saved - "+rES.data); await refresh(false); }
+    return;
+  }
+
+  if(a==="edittenure"){
+    var ecid = D("cid");
+    var conE = S.contracts.filter(function(x){ return x.id===ecid; })[0];
+    if(!conE) return;
+    var siteT = S.sites.filter(function(x){ return x.id===conE.site_id; })[0] || {};
+    var mine = S.list.filter(function(x){ return x.contract_id===ecid; });
+    var sent = mine.filter(function(x){ return x.status!=="draft"; }).length;
+    modal("Edit tenure &mdash; "+esc(vendorName(conE.vendor_id))+" at "+esc(siteT.name||""),
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">Started on</label>'+
+          '<input class="inp" id="et-from" type="date" value="'+String(conE.from_date).slice(0,10)+'"></div>'+
+        '<div class="fld"><label class="fl">Last day</label>'+
+          '<input class="inp" id="et-to" type="date" value="'+(conE.to_date?String(conE.to_date).slice(0,10):"")+'">'+
+          '<div class="hint">Blank means still running.</div></div>'+
+      '</div>'+
+      '<div class="fld"><label class="fl">Vehicles</label>'+
+        '<input class="inp num" id="et-veh" value="'+(conE.vehicles||1)+'"></div>'+
+      (mine.length?'<div class="banner b-teal" style="margin:0 0 14px"><div class="ico">&#128209;</div><div>'+
+        '<b>'+mine.length+' settlement'+(mine.length===1?'':'s')+' sit under this tenure</b>'+
+        (sent?sent+' of them have already gone to the vendor. Those keep the covering dates he was sent &mdash; a statement that has gone out is a record, not a view. ':'')+
+        'Dates that would leave any month outside the tenure are refused, and the months are named.</div></div>':'')+
+      '<div class="banner b-blue" style="margin:0"><div class="ico">&#9432;</div><div>'+
+      'Two vendors cannot hold one site at the same time, so dates running into the next partner are refused.</div></div>'+
+      '<input type="hidden" id="et-id" value="'+esc(ecid)+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="edittenure-go">Save the tenure</button>');
+    return;
+  }
+  if(a==="edittenure-go"){
+    var rET = await call("vs_set_contract", {
+      p_contract:val("et-id"), p_vehicles:num("et-veh"),
+      p_from:val("et-from")||null, p_to:val("et-to")||null });
+    if(rET.ok){ closeModal(); toast(String(rET.data)==="nothing changed"?"Nothing changed":"Saved - "+rET.data); await refresh(false); }
+    return;
+  }
+  if(a==="reopentenure"){
+    var rcid = D("cid");
+    var conR = S.contracts.filter(function(x){ return x.id===rcid; })[0];
+    modal("Reopen this tenure",
+      '<div class="banner b-amber" style="margin:0 0 14px"><div class="ico">&#8635;</div><div>'+
+      '<b>'+esc(conR?vendorName(conR.vendor_id):"")+'</b>'+
+      'The end date comes off and the tenure runs on with no finish. Use this when an end date was entered by mistake. '+
+      'If another partner has since taken the site over, this is refused.</div></div>'+
+      '<input type="hidden" id="rt-id" value="'+esc(rcid)+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="reopentenure-go">Reopen it</button>');
+    return;
+  }
+  if(a==="reopentenure-go"){
+    var rRT = await call("vs_reopen_contract", {p_contract:val("rt-id")}, "Tenure reopened");
+    if(rRT.ok){ closeModal(); await refresh(false); }
     return;
   }
 

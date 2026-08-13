@@ -63,7 +63,18 @@ such a function row-level security does not apply. They never asked who was call
 `vs_list_statements`, which fills the home screen, was handing every settlement in the company
 to whoever asked, including an account with no invitation at all. Nine functions now check.
 
-### 3d. Note for later
+### 3d. Run the third patch
+
+New query. Paste and run `VS-PATCH-3.sql`. It lets you edit a site and a tenure after
+creating them, which you previously could not do at all: a misspelt site name was
+permanent, and a tenure's start date could never be corrected. It ends by printing
+`t | t | t | t | t`.
+
+It also gives a site its own life, separate from who runs it - the day WeVois started
+there and the day it closed. A closed site takes no vendor and no month can be opened
+for it, while everything already settled stays readable.
+
+### 3e. Note for later
 
 `VS-IMPORT-HISTORY.sql` loads your whole spreadsheet history, but it cannot run yet.
 It writes through the same functions the app uses, and those refuse anybody who is not a
@@ -149,6 +160,8 @@ all - no vendors, no sites, no statements. That is a database rule, not a hidden
 
 For each site press **Assign a vendor**, choose the vendor, enter the vehicle count and the date the tenure started.
 
+**Edit site** changes the name, the city and the site's own start and closing dates. **Edit** next to a tenure changes its start date, its last day and the vehicle count; **Reopen** takes an end date back off. Every one of them refuses rather than corrupts: a date that would strand an existing settlement outside its own tenure is turned away with the months named, two vendors can never overlap on one site, and a site cannot be closed while somebody is still running it. Settlements already sent to a vendor keep the covering dates he was shown.
+
 When a site changes hands, use **Change vendor** and give the exact day — it does not have to be the 1st. Nawa is your example: Heera Ram ji until 15 April 2026, Firoz from the 16th. The outgoing tenure ends the day before automatically, and April then produces two settlements for Nawa, one per vendor, each covering only its own days.
 
 ### 10b. Load your history
@@ -210,9 +223,9 @@ written reason, and both the attachment and the removal go into the permanent re
 
 Not claims — assertions that run.
 
-**The database: 208 checks on real PostgreSQL 16, as the `authenticated` role, zero failures.** An uninvited signup reads nothing at all. A vendor sees only his own shared statements and none of his own drafts. Another vendor cannot read, query or approve a statement that is not his. The CEO and VP can read everything and every write is refused — including a direct SQL update on their own profile row to promote themselves. The manager cannot post payroll; Accounts cannot resolve a point; the CEO, the VP and the vendor himself are all refused when they try to move money. A statement cannot be shared until payroll is posted. A shared version cannot be edited by anyone, including the admin, including by direct SQL. A decision without a written reason is refused. Payment is refused without a UTR and refused if it would exceed the approved amount. The last administrator cannot be demoted or deactivated. A deleted settlement takes its versions, points and payments with it while the audit tombstone naming who, why and the UTRs survives and cannot itself be edited. An attached file can be read by the vendor it belongs to and by nobody else - not another vendor holding the exact path, not an uninvited account - and no role, including the administrator, can write a document row by direct SQL. A vendor reads only the sites he runs or has run, only his own vendor row, only his own contracts and booking heads, and only the months that have actually been sent to him; pointed straight at another vendor's statement and version with the real identifiers, every one of the nine reader functions gives him nothing, while the owner, Accounts, the CEO and the administrator all still get the right figure.
+**The database: 252 checks on real PostgreSQL 16, as the `authenticated` role, zero failures.** An uninvited signup reads nothing at all. A vendor sees only his own shared statements and none of his own drafts. Another vendor cannot read, query or approve a statement that is not his. The CEO and VP can read everything and every write is refused — including a direct SQL update on their own profile row to promote themselves. The manager cannot post payroll; Accounts cannot resolve a point; the CEO, the VP and the vendor himself are all refused when they try to move money. A statement cannot be shared until payroll is posted. A shared version cannot be edited by anyone, including the admin, including by direct SQL. A decision without a written reason is refused. Payment is refused without a UTR and refused if it would exceed the approved amount. The last administrator cannot be demoted or deactivated. A deleted settlement takes its versions, points and payments with it while the audit tombstone naming who, why and the UTRs survives and cannot itself be edited. An attached file can be read by the vendor it belongs to and by nobody else - not another vendor holding the exact path, not an uninvited account - and no role, including the administrator, can write a document row by direct SQL. A vendor reads only the sites he runs or has run, only his own vendor row, only his own contracts and booking heads, and only the months that have actually been sent to him; pointed straight at another vendor's statement and version with the real identifiers, every one of the nine reader functions gives him nothing, while the owner, Accounts, the CEO and the administrator all still get the right figure.
 
-**The app: 167 checks in a headless browser, zero JavaScript errors**, driving the whole journey — first-run bootstrap, building the org, the Nawa mid-month handover producing two April settlements with the right date ranges, the payroll gate, the gross-less-heads arithmetic, a recorded-only adjustment that does not move the figure, sharing and freezing, points on both a head and an adjustment, the phone-call confirm loop, resolve and revise with the diff, approval, part payments, the observer who can touch nothing, the loud delete with its surviving tombstone, a back-dated payment entered by the vendor manager, and the whole attachment cycle: the manager attaching a payroll sheet and an ESIC challan, a 26 MB file turned away, the vendor opening both and being refused when he tries to attach or remove one, another vendor refused the exact path, and a removal that will not go through without a reason. It also checks, as a second vendor with his own login, that his screen names one site, one vendor and one contract, that the other site's name appears nowhere on it, and that staff still read everything.
+**The app: 188 checks in a headless browser, zero JavaScript errors**, driving the whole journey — first-run bootstrap, building the org, the Nawa mid-month handover producing two April settlements with the right date ranges, the payroll gate, the gross-less-heads arithmetic, a recorded-only adjustment that does not move the figure, sharing and freezing, points on both a head and an adjustment, the phone-call confirm loop, resolve and revise with the diff, approval, part payments, the observer who can touch nothing, the loud delete with its surviving tombstone, a back-dated payment entered by the vendor manager, and the whole attachment cycle: the manager attaching a payroll sheet and an ESIC challan, a 26 MB file turned away, the vendor opening both and being refused when he tries to attach or remove one, another vendor refused the exact path, and a removal that will not go through without a reason. It also checks, as a second vendor with his own login, that his screen names one site, one vendor and one contract, that the other site's name appears nowhere on it, and that staff still read everything.
 
 ---
 
