@@ -318,7 +318,11 @@ function headOptionsForStatement(sel){
   var a = (v.adjustments||[]).map(function(x){
     return '<option value="adjustment|'+esc(x.id)+'|'+esc(x.label)+'"'+
       (sel===x.id?" selected":"")+'>'+esc(x.label)+' (adjustment)</option>'; }).join("");
-  return '<optgroup label="Booking heads">'+o+'</optgroup>'+(a?'<optgroup label="Adjustments">'+a+'</optgroup>':'');
+  var g = '<option value="gross||Total Expenses Should Be Paid"'+(sel==="__gross"?" selected":"")+
+          '>Total Expenses Should Be Paid (what the partner earned)</option>';
+  return '<optgroup label="The earned amount">'+g+'</optgroup>'+
+         '<optgroup label="Booking heads">'+o+'</optgroup>'+
+         (a?'<optgroup label="Adjustments">'+a+'</optgroup>':'');
 }
 
 /* ====================================================================== */
@@ -364,21 +368,20 @@ document.addEventListener("click", async function(e){
   if(a==="adj-add"){
     var t0 = S.adjTypes[0]||{label:"Other Adjustment", effect:"deduct"};
     S.draft.adj.push({label:t0.label, effect:t0.effect, amount:0, reference:"", note:""});
-    render(); return;
+    markDirty(); render(); return;
   }
-  if(a==="adj-del"){ S.draft.adj.splice(Number(D("i")),1); render(); return; }
+  if(a==="adj-del"){ S.draft.adj.splice(Number(D("i")),1); markDirty(); render(); return; }
   if(a==="savedraft"){
-    var lines = {};
-    Object.keys(S.draft.lines).forEach(function(k){ lines[k] = S.draft.lines[k]; });
-    var r = await call("vs_save_draft", {
-      p_stmt:S.open, p_gross:S.draft.gross, p_gross_note:S.draft.note,
-      p_lines:lines, p_adj:S.draft.adj }, "Draft saved", "saving...");
-    if(r.ok) await refresh(true);
+    if(autosaveTimer) clearTimeout(autosaveTimer);
+    var r = await autosave();
+    if(r.ok){ toast("Draft saved"); await refresh(true); }
     return;
   }
 
   /* ---- statement flow ---- */
   if(a==="share"){
+    if(autosaveTimer) clearTimeout(autosaveTimer);
+    if(S.dirty) await autosave();
     var st = S.stmt;
     ask("Share with the vendor",
       '<div class="decl">Once you share, <b>version '+curVer(st).v+' freezes permanently</b>. Nobody can edit it afterwards - '+
@@ -424,7 +427,8 @@ document.addEventListener("click", async function(e){
   if(a==="raise"){
     var key = D("key")||"", kind = D("kind")||"head", label = D("label")||"";
     var vv = curVer(S.stmt), our = 0;
-    if(kind==="head") (vv.lines||[]).forEach(function(l){ if(l.head_key===key) our=Number(l.amount)||0; });
+    if(kind==="gross"){ our = Number(vv.gross)||0; key = "__gross"; }
+    else if(kind==="head") (vv.lines||[]).forEach(function(l){ if(l.head_key===key) our=Number(l.amount)||0; });
     else (vv.adjustments||[]).forEach(function(x){ if(x.id===key) our=Number(x.amount)||0; });
     modal("Raise a point",
       '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#9432;</div><div>'+
@@ -434,8 +438,10 @@ document.addEventListener("click", async function(e){
       '<div class="fld"><label class="fl">Your figure (optional)</label><input class="inp num" id="q-claim" placeholder="leave blank if you only want an explanation"></div>'+
       '<div class="fld"><label class="fl">What is the issue?</label><textarea class="inp" id="q-note" '+
         'placeholder="Be specific - dates, vehicle numbers, bill numbers."></textarea></div>'+
-      '<div class="fld"><label class="fl">Attach proof (file name or reference, optional)</label>'+
-        '<input class="inp" id="q-att" placeholder="e.g. workshop-bill-4417.pdf"></div>',
+      '<div class="fld"><label class="fl">Attach proof (optional)</label>'+
+        '<input type="file" id="q-file" class="inp">'+
+        '<div class="hint">The bill, the log sheet, a photo &mdash; up to 25 MB. It goes on this month&rsquo;s '+
+        'record where WeVois can open it, and stays there.</div></div>',
       '<button class="btn" data-act="closemodal">Cancel</button>'+
       '<button class="btn primary" data-act="raise-go">Submit point</button>');
     return;
@@ -443,9 +449,16 @@ document.addEventListener("click", async function(e){
   if(a==="raise-go"){
     var tv = (val("q-target")||"").split("|");
     var claim = val("q-claim").replace(/[^0-9.\-]/g,"");
+    if(!val("q-note").trim()){ toast("Describe the issue. That text is the record."); return; }
+    var qfile = document.getElementById("q-file"), qatt = "";
+    if(qfile && qfile.files && qfile.files[0]){
+      var qup = await uploadDoc(qfile.files[0], "bill", true);
+      if(!qup.ok) return;
+      qatt = qfile.files[0].name;
+    }
     var r5 = await call("vs_raise_point", {
       p_stmt:S.open, p_kind:tv[0], p_key:tv[1]||"", p_label:tv[2]||"",
-      p_claimed: claim===""?null:Number(claim), p_note:val("q-note"), p_attach:val("q-att")
+      p_claimed: claim===""?null:Number(claim), p_note:val("q-note"), p_attach:qatt
     }, "Point recorded - WeVois notified", "saving...");
     if(r5.ok){ closeModal(); S.tab="points"; await refresh(true); }
     return;
@@ -579,6 +592,189 @@ document.addEventListener("click", async function(e){
       closeModal();
       toast(Number(rP.data)<=0.005 ? "Paid in full - month closed" : "Part payment recorded. Balance "+inr(rP.data));
       S.tab="payments"; await refresh(true);
+    }
+    return;
+  }
+
+  /* ---- site blocks ---- */
+  if(a==="opensite"){ S.site = D("sid"); window.scrollTo(0,0); render(); return; }
+  if(a==="backsites"){ S.site = null; window.scrollTo(0,0); render(); return; }
+
+  /* ---- general queries ---- */
+  if(a==="raiseq"){
+    modal("Raise a query",
+      '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#128172;</div><div>'+
+      'For anything that is not a figure on this month&rsquo;s sheet &mdash; vehicles, drivers, fuel cards, documents, '+
+      'next month. It is answered in writing and stays on this month&rsquo;s record. It does <b>not</b> hold up the '+
+      'settlement. If you disagree with an <b>amount</b>, go back to the Statement tab and raise a point on that line '+
+      'instead, so the figure can actually move.</div></div>'+
+      '<div class="fld"><label class="fl">What do you need?</label>'+
+        '<textarea class="inp" id="qq-note" placeholder="Be specific - dates, vehicle numbers, names."></textarea></div>'+
+      '<div class="fld"><label class="fl">Attach a file (optional)</label>'+
+        '<input type="file" id="qq-file" class="inp">'+
+        '<div class="hint">Up to 25 MB. It goes on this month&rsquo;s record where WeVois can open it.</div></div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="raiseq-go">Send the query</button>');
+    return;
+  }
+  if(a==="raiseq-go"){
+    var qnote = val("qq-note");
+    if(!qnote.trim()){ toast("Write the question down. That text is the record."); return; }
+    var qf = document.getElementById("qq-file");
+    var qname = "";
+    if(qf && qf.files && qf.files[0]){
+      var up = await uploadDoc(qf.files[0], "other", true);
+      if(!up.ok) return;
+      qname = qf.files[0].name;
+    }
+    var rQ = await call("vs_raise_query", {p_stmt:S.open, p_note:qnote, p_attach:qname},
+      "Query sent - WeVois will answer in writing");
+    if(rQ.ok){ closeModal(); S.tab="queries"; await refresh(true); }
+    return;
+  }
+  if(a==="answerq"){
+    var aid = D("id");
+    var apt = (S.stmt.points||[]).filter(function(p){ return p.id===aid; })[0] || {};
+    modal("Answer this query",
+      '<div class="banner b-grey" style="margin-bottom:14px"><div class="ico">&#10077;</div><div>'+
+      '<b>'+esc(apt.raised_by||"")+' asked</b>'+esc(apt.note||"")+'</div></div>'+
+      '<div class="fld"><label class="fl">Your answer &mdash; the vendor sees this word for word</label>'+
+        '<textarea class="inp" id="aq-text">'+esc(apt.decision||"")+'</textarea></div>'+
+      '<input type="hidden" id="aq-id" value="'+esc(aid)+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="answerq-go">Send the answer</button>');
+    return;
+  }
+  if(a==="answerq-go"){
+    var rAQ = await call("vs_answer_query", {p_point:val("aq-id"), p_reply:val("aq-text")}, "Answer sent");
+    if(rAQ.ok){ closeModal(); await refresh(true); }
+    return;
+  }
+  if(a==="remark"){
+    modal("Add a remark",
+      '<div class="banner b-grey" style="margin-bottom:14px"><div class="ico">&#9998;</div><div>'+
+      'A remark never moves an amount and never closes anything. It is the written trail of what was said '+
+      'around the decision, and both sides can see it.</div></div>'+
+      '<div class="fld"><label class="fl">Remark</label><textarea class="inp" id="rk-text"></textarea></div>'+
+      '<input type="hidden" id="rk-id" value="'+esc(D("id"))+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="remark-go">Add it</button>');
+    return;
+  }
+  if(a==="remark-go"){
+    var rRK = await call("vs_add_remark", {p_point:val("rk-id"), p_body:val("rk-text")}, "Remark added");
+    if(rRK.ok){ closeModal(); await refresh(true); }
+    return;
+  }
+
+  /* ---- reading the payroll out of a file ---- */
+  if(a==="readpayroll"){
+    var fi2 = document.getElementById("pr-file");
+    if(fi2){ fi2.value = ""; fi2.click(); }
+    return;
+  }
+  if(a==="useread"){
+    var P = S.read;
+    if(!P) return;
+    var mode = val("rd-split") || "dh";
+    var sh = mode==="split" ? num("rd-stf-heads") : (mode==="stf" ? P.paid_members : 0);
+    var frac = P.paid_members ? Math.min(Math.max(sh,0), P.paid_members) / P.paid_members : 0;
+    if(mode==="stf") frac = 1;
+    if(mode==="dh")  frac = 0;
+
+    var kept = false;
+    function put(id, v){ var el = document.getElementById(id); if(el){ el.value = v; } }
+    function split(dhId, stfId, total){
+      var stf = Math.round(total * frac * 100)/100;
+      put(stfId, stf); put(dhId, Math.round((total - stf)*100)/100);
+    }
+    var dhH = P.paid_members - sh;
+    if(P.kind === "salary"){
+      split("dh_pay","stf_pay", P.amount);
+      put("dh_heads", dhH); put("stf_heads", sh);
+      if(P.rejected.length && val("rd-np")==="1"){
+        put("not_processed_amount", Math.round((P.amount_all - P.amount)*100)/100);
+        var el = document.getElementById("not_processed_reason");
+        if(el) el.value = P.rejected.map(function(r){
+          return r.name + " " + inr(r.amount) + " did not go through the bank"; }).join("; ") + ".";
+      }
+    } else if(P.kind === "pf"){
+      split("dh_pf_ee","stf_pf_ee", P.employee);
+      split("dh_pf_er","stf_pf_er", P.employer);
+      /* the bank file is the better answer to "how many people were paid" -
+         PF and ESIC each cover a subset - so a headcount already set is left
+         alone rather than quietly replaced by a smaller one */
+      if(!num("dh_heads") && !num("stf_heads")){ put("dh_heads", dhH); put("stf_heads", sh); }
+      else kept = true;
+    } else if(P.kind === "esic"){
+      split("dh_esic_ee","stf_esic_ee", P.employee);
+      split("dh_esic_er","stf_esic_er", P.employer);
+    }
+    closeModal();
+    toast("Figures filled in from " + P.filename +
+      (kept ? " - the headcount already on the form was left as it is" : "") +
+      " - check them, then post");
+    S.read = null;
+    return;
+  }
+  if(a==="rd-split"){ /* handled on change */ return; }
+
+  /* ---- payroll processed late ---- */
+  if(a==="topup"){
+    modal("Salary processed late",
+      '<div class="banner b-teal" style="margin-bottom:16px"><div class="ico">&#8721;</div><div>'+
+      '<b>This goes on as its own entry, not over the top of the month</b>'+
+      'Enter only the people who were left off the first run. Their wages, PF and ESIC are added to what is already '+
+      'posted, and the entry keeps its own challan and date so the statement always agrees with the challans behind it.'+
+      (S.stmt.statement.status!=="draft"
+        ? ' This statement is already with the vendor, so the top-up waits for the next version, like any other correction.'
+        : '')+'</div></div>'+
+      '<h3 style="font-size:14px;margin:4px 0 10px">Driver / helper &mdash; the late batch only</h3>'+
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">Wages processed</label><input class="inp num" id="tu-dh_pay" value="0"></div>'+
+        '<div class="fld"><label class="fl">How many people</label><input class="inp num" id="tu-dh_heads" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employee part</label><input class="inp num" id="tu-dh_pf_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employer part</label><input class="inp num" id="tu-dh_pf_er" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employee part</label><input class="inp num" id="tu-dh_esic_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employer part</label><input class="inp num" id="tu-dh_esic_er" value="0"></div>'+
+      '</div>'+
+      '<h3 style="font-size:14px;margin:14px 0 10px">Staff &mdash; the late batch only</h3>'+
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">Salary processed</label><input class="inp num" id="tu-stf_pay" value="0"></div>'+
+        '<div class="fld"><label class="fl">How many people</label><input class="inp num" id="tu-stf_heads" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employee part</label><input class="inp num" id="tu-stf_pf_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employer part</label><input class="inp num" id="tu-stf_pf_er" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employee part</label><input class="inp num" id="tu-stf_esic_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employer part</label><input class="inp num" id="tu-stf_esic_er" value="0"></div>'+
+      '</div>'+
+      '<h3 style="font-size:14px;margin:14px 0 10px">This batch&rsquo;s own references</h3>'+
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">PF challan / TRRN</label><input class="inp" id="tu-pf_trrn"></div>'+
+        '<div class="fld"><label class="fl">PF deposited on</label><input class="inp" id="tu-pf_paid_on" type="date"></div>'+
+        '<div class="fld"><label class="fl">ESIC challan no.</label><input class="inp" id="tu-esic_challan"></div>'+
+        '<div class="fld"><label class="fl">ESIC deposited on</label><input class="inp" id="tu-esic_paid_on" type="date"></div>'+
+        '<div class="fld"><label class="fl">Processed on</label><input class="inp" id="tu-processed_on" type="date"></div>'+
+      '</div>'+
+      '<div class="fld"><label class="fl">Why is it going on late? &mdash; the vendor sees this</label>'+
+        '<input class="inp" id="tu-note" placeholder="e.g. four helpers left off the first run, processed on the 22nd"></div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn teal" data-act="topup-go">Add this entry</button>');
+    return;
+  }
+  if(a==="topup-go"){
+    var tp = {};
+    ["dh_pay","dh_heads","dh_pf_ee","dh_pf_er","dh_esic_ee","dh_esic_er",
+     "stf_pay","stf_heads","stf_pf_ee","stf_pf_er","stf_esic_ee","stf_esic_er"]
+      .forEach(function(k){ tp[k] = num("tu-"+k); });
+    ["pf_trrn","pf_paid_on","esic_challan","esic_paid_on","processed_on","note"]
+      .forEach(function(k){ tp[k] = val("tu-"+k); });
+    var rTU = await call("vs_add_payroll_batch", {p_stmt:S.open, p:tp}, null, "adding the entry...");
+    if(rTU.ok){
+      closeModal();
+      toast(String(rTU.data)==="parked"
+        ? "Entry added - it lands when you issue the next version"
+        : "Entry added and applied to the statement");
+      await refresh(true);
     }
     return;
   }
@@ -1081,13 +1277,70 @@ document.addEventListener("input", function(e){
     if(k==="__gross") S.draft.gross = Number(String(el.value).replace(/[^0-9.\-]/g,"")||0);
     else if(k==="__note") S.draft.note = el.value;
     else S.draft.lines[k] = Number(String(el.value).replace(/[^0-9.\-]/g,"")||0);
+    markDirty();
   }
   if(a==="adjf" && S.draft){
     var i = Number(el.getAttribute("data-i")), f = el.getAttribute("data-f");
     if(!S.draft.adj[i]) return;
     S.draft.adj[i][f] = (f==="amount") ? Number(String(el.value).replace(/[^0-9.\-]/g,"")||0) : el.value;
+    markDirty();
   }
 });
+
+/* ------------------------------------------------------------- autosave */
+/* Typing a figure and forgetting to press Save is exactly the kind of gap
+   this whole system exists to close, so the draft saves itself. It waits for
+   a pause in typing rather than firing on every keystroke, never runs while
+   another save is in flight, and only ever touches a DRAFT - a version that
+   has gone to the vendor is frozen and no amount of typing can reach it. */
+var AUTOSAVE_MS = 900;
+var autosaveTimer = null;
+
+function autosaveNote(txt, cls){
+  var el = document.getElementById("autosave");
+  if(!el) return;
+  el.textContent = txt;
+  el.className = "autosave" + (cls ? " " + cls : "");
+}
+
+function markDirty(){
+  if(!S.draft || !S.open) return;
+  if(!S.stmt || S.stmt.statement.status !== "draft") return;
+  S.dirty = true;
+  autosaveNote("unsaved changes", "warn");
+  if(autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(function(){ autosave(); }, AUTOSAVE_MS);
+}
+
+async function autosave(silent){
+  if(!S.draft || !S.open || S.saving) return {ok:false};
+  if(!S.stmt || S.stmt.statement.status !== "draft") return {ok:false};
+  if(!S.dirty && silent) return {ok:true};
+  S.saving = true;
+  autosaveNote("saving...", "");
+  var lines = {};
+  Object.keys(S.draft.lines).forEach(function(k){ lines[k] = S.draft.lines[k]; });
+  var res;
+  try{
+    res = await rpc("vs_save_draft", {
+      p_stmt:S.open, p_gross:S.draft.gross, p_gross_note:S.draft.note,
+      p_lines:lines, p_adj:S.draft.adj }, "saving...");
+    S.dirty = false;
+    autosaveNote("saved " + new Date().toLocaleTimeString(), "ok");
+    res = {ok:true};
+  }catch(e){
+    autosaveNote("not saved - " + friendly(e), "bad");
+    res = {ok:false, error:e};
+  }
+  S.saving = false;
+  return res;
+}
+
+/* nothing should leave the screen with an unsaved figure on it */
+window.addEventListener("beforeunload", function(e){
+  if(S.dirty){ e.preventDefault(); e.returnValue = ""; }
+});
+
 /* ------------------------------------------------------ attaching a file */
 var DOC_MAX = 25 * 1024 * 1024;
 
@@ -1103,14 +1356,14 @@ function docStatus(t){
   if(el) el.textContent = t || "";
 }
 
-async function uploadDoc(file){
+async function uploadDoc(file, kindOverride, quiet){
   if(!file || !S.open) return {ok:false};
   if(file.size > DOC_MAX){
     toast("That file is "+Math.round(file.size/1048576)+" MB. The limit is 25 MB.");
     return {ok:false};
   }
   var kindEl = document.getElementById("doc-kind");
-  var kind = kindEl ? kindEl.value : "other";
+  var kind = kindOverride || (kindEl ? kindEl.value : "other");
   var name = safeName(file.name);
   /* the statement id is the first folder, which is what the storage policy
      reads to decide who may open the file */
@@ -1138,12 +1391,35 @@ async function uploadDoc(file){
     try{ await SB.storage.from("vs-docs").remove([path]); }catch(e){}
     return {ok:false};
   }
-  toast(file.name + " attached - the vendor can open it now");
-  await refresh(true);
+  if(!quiet){
+    toast(file.name + " attached - it is on this month's record now");
+    await refresh(true);
+  }
   return {ok:true, path:path};
 }
 
 document.addEventListener("change", async function(e){
+  if(e.target && e.target.id === "pr-file"){
+    var pf = e.target.files && e.target.files[0];
+    if(!pf) return;
+    toast("Reading " + pf.name + "...");
+    var parsed;
+    try{ parsed = await readPayrollFile(pf); }
+    catch(err){ toast(err.message || "Could not read that file."); return; }
+    S.read = parsed;
+    modal("What the file says",
+      readReview(parsed),
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="useread">Use these figures</button>');
+    /* the document itself belongs on the record beside the figures it produced */
+    try{ await uploadDoc(pf, parsed.kind === "salary" ? "payroll" : parsed.kind, true); }catch(e2){}
+    return;
+  }
+  if(e.target && e.target.id === "rd-split"){
+    var box = document.getElementById("rd-split-box");
+    if(box) box.style.display = (e.target.value === "split") ? "" : "none";
+    return;
+  }
   if(e.target && e.target.id === "doc-file"){
     var f = e.target.files && e.target.files[0];
     if(f) await uploadDoc(f);

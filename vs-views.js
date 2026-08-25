@@ -24,6 +24,7 @@ function render(){
 
   var body;
   if(S.open && S.stmt)                 body = viewStatement();
+  else if(S.site)                      body = viewSite();
   else if(S.profile.role==="admin")    body = viewAdmin();
   else if(isObserver())                body = viewLeadership();
   else if(S.profile.role==="vendor")   body = viewVendorHome();
@@ -65,6 +66,80 @@ function listRows(list){
 }
 function ofPeriod(){ return S.list.filter(function(x){ return String(x.period).slice(0,10)===S.period; }); }
 
+/* --------------------------------------------------- site blocks and drill-in */
+/* One block per site rather than one long list of every vendor-month. A month
+   only means something in the context of its site, and a site with eleven
+   months of history reads as a place, not as eleven rows. */
+function sitesOf(list){
+  var by = {};
+  list.forEach(function(x){
+    var k = x.site_id;
+    if(!by[k]) by[k] = {id:k, name:x.site_name, months:[], vendors:{}, vehicles:x.vehicles,
+                        payable:0, outstanding:0, openPts:0, blocked:0, awaiting:0};
+    var s = by[k];
+    s.months.push(x);
+    s.vendors[x.vendor_name] = 1;
+    s.openPts += Number(x.open_points)||0;
+    if(x.payroll_status !== "posted") s.blocked++;
+    if(x.status==="sent"||x.status==="under_query") s.awaiting++;
+    if(x.status==="approved"||x.status==="part_paid")
+      s.outstanding += Number(x.approved_amount||0) - Number(x.paid_total||0);
+    if(String(x.period).slice(0,10) === S.period) s.payable += Number(x.final)||0;
+  });
+  return Object.keys(by).map(function(k){ return by[k]; })
+    .sort(function(a,b){ return a.name < b.name ? -1 : 1; });
+}
+
+function siteBlocks(list){
+  var ss = sitesOf(list);
+  if(!ss.length) return '<div class="empty">Nothing here yet.</div>';
+  return '<div class="blocks">'+ss.map(function(s){
+    var vn = Object.keys(s.vendors);
+    var latest = s.months.slice().sort(function(a,b){ return String(a.period) < String(b.period) ? 1 : -1; })[0];
+    var flags = [];
+    if(s.blocked)  flags.push('<span class="chip c-red"><span class="d"></span>'+s.blocked+' payroll pending</span>');
+    if(s.openPts)  flags.push('<span class="chip c-amber"><span class="d"></span>'+s.openPts+' open point'+(s.openPts===1?'':'s')+'</span>');
+    if(s.awaiting) flags.push('<span class="chip c-blue"><span class="d"></span>'+s.awaiting+' with vendor</span>');
+    if(s.outstanding > 0.005) flags.push('<span class="chip c-green"><span class="d"></span>'+inr(s.outstanding)+' to pay</span>');
+    return '<div class="block" data-act="opensite" data-sid="'+s.id+'">'+
+      '<div class="block-h"><h3>'+esc(s.name)+'</h3>'+
+        '<div class="block-sub">'+esc(vn.join(", "))+
+        (s.vehicles?' &middot; '+s.vehicles+' vehicles':'')+'</div></div>'+
+      '<div class="block-v">'+inr(s.payable)+'<span>this month</span></div>'+
+      '<div class="block-f">'+(flags.join("") || '<span class="chip c-grey"><span class="d"></span>nothing outstanding</span>')+'</div>'+
+      '<div class="block-n">'+s.months.length+' month'+(s.months.length===1?'':'s')+' on record'+
+        (latest?' &middot; latest '+esc(latest.period_label):'')+'</div>'+
+      '</div>'; }).join("")+'</div>';
+}
+
+function viewSite(){
+  var list = S.list.filter(function(x){ return x.site_id === S.site; });
+  if(!list.length){ S.site = null; return ""; }
+  var name = list[0].site_name;
+  var months = list.slice().sort(function(a,b){ return String(a.period) < String(b.period) ? 1 : -1; });
+  var total = months.reduce(function(a,x){ return a + (Number(x.final)||0); }, 0);
+  var paid  = months.reduce(function(a,x){ return a + (Number(x.paid_total)||0); }, 0);
+  var vn = {}; months.forEach(function(x){ vn[x.vendor_name] = 1; });
+
+  return '<div class="page-h"><div>'+
+      '<button class="btn sm" data-act="backsites" style="margin-bottom:10px">&larr; All sites</button>'+
+      '<h1>'+esc(name)+'</h1><p>'+esc(Object.keys(vn).join(", "))+' &middot; '+
+      months.length+' month'+(months.length===1?'':'s')+' on record</p></div></div>'+
+    '<div class="kpis">'+
+      '<div class="kpi"><div class="l">Settled to date</div><div class="v">'+inr(total)+'</div>'+
+        '<div class="n">every version currently in force</div></div>'+
+      '<div class="kpi"><div class="l">Paid to date</div><div class="v" style="color:var(--teal)">'+inr(paid)+'</div>'+
+        '<div class="n">against approved versions only</div></div>'+
+      '<div class="kpi"><div class="l">Outstanding</div><div class="v" style="color:var(--amber)">'+
+        inr(months.reduce(function(a,x){ return a + (["approved","part_paid"].indexOf(x.status)>=0
+          ? Number(x.approved_amount||0) - Number(x.paid_total||0) : 0); },0))+'</div>'+
+        '<div class="n">approved, not yet cleared</div></div>'+
+    '</div>'+
+    '<div class="card"><div class="card-h"><h2>Month by month</h2><div class="spacer"></div>'+
+      '<span class="sub">newest first &mdash; click a row to open</span></div>'+
+      '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(months)+'</tbody></table></div></div>';
+}
+
 /* ------------------------------------------------------------ manager home */
 function viewManagerHome(){
   var mine = ofPeriod();
@@ -95,12 +170,10 @@ function viewManagerHome(){
      '<div class="kpi"><div class="l">Open points</div><div class="v" style="color:var(--amber)">'+pts+'</div><div class="n">every one on record</div></div>'+
      '<div class="kpi"><div class="l">Paid to date</div><div class="v" style="color:var(--teal)">'+inr(paid)+'</div><div class="n">against approved versions only</div></div>'+
    '</div>'+
-   '<div class="card"><div class="card-h"><h2>This month</h2><div class="spacer"></div><span class="sub">Click a row to open</span></div>'+
-   '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(mine)+'</tbody></table></div></div>'+
-   payQueue()+
-   '<div class="card"><div class="card-h"><h2>Every month</h2><div class="spacer"></div>'+
-     '<span class="sub">'+S.list.length+' settlements across every site and month</span></div>'+
-   '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(S.list)+'</tbody></table></div></div>';
+   '<div class="card"><div class="card-h"><h2>Your sites</h2><div class="spacer"></div>'+
+     '<span class="sub">click a site for its months</span></div>'+
+   '<div class="card-b">'+siteBlocks(S.list)+'</div></div>'+
+   payQueue();
 }
 
 /* Approved but not yet fully paid, across every month - not just this one.
@@ -144,8 +217,9 @@ function viewAccountsHome(){
      '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+
        listRows(toPay.slice().sort(function(a,b){ return String(a.period) < String(b.period) ? -1 : 1; }))+
      '</tbody></table></div></div>'+
-   '<div class="card"><div class="card-h"><h2>All settlements</h2><span class="sub">open any month to post a correction</span></div>'+
-     '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(S.list)+'</tbody></table></div></div>';
+   '<div class="card"><div class="card-h"><h2>Sites</h2><div class="spacer"></div>'+
+     '<span class="sub">click a site for its months</span></div>'+
+     '<div class="card-b">'+siteBlocks(S.list)+'</div></div>';
 }
 
 /* --------------------------------------------------------- leadership home */
@@ -184,8 +258,9 @@ function viewLeadership(){
      '<div class="card-b">'+(bars||'<div class="empty">No settlement has a posted payroll yet.</div>')+
      (skipped>0?'<div style="font-size:12px;color:var(--muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)">'+
        skipped+' left out &mdash; payroll not posted yet, so the figure would read low.</div>':'')+'</div></div>'+
-   '<div class="card"><div class="card-h"><h2>By vendor and site</h2></div>'+
-     '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(mine)+'</tbody></table></div></div>';
+   '<div class="card"><div class="card-h"><h2>Sites</h2><div class="spacer"></div>'+
+     '<span class="sub">click a site for its months</span></div>'+
+     '<div class="card-b">'+siteBlocks(S.list)+'</div></div>';
 }
 
 /* ------------------------------------------------------------ vendor home */
@@ -294,6 +369,9 @@ function viewStatement(){
     ["points","Points"+((st.points||[]).length?'<span class="cnt" style="'+(op?'':'background:var(--faint)')+'">'+st.points.length+'</span>':'')],
     ["versions","Versions ("+st.versions.length+")"],
     ["payments","Payments ("+(st.payments||[]).length+")"],
+    ["queries","Queries"+(openQueries(st)?'<span class="cnt" style="background:var(--amber)">'+openQueries(st)+'</span>'
+        :((st.points||[]).filter(isQuery).length?'<span class="cnt" style="background:var(--faint)">'+
+          (st.points||[]).filter(isQuery).length+'</span>':''))],
     ["record","Full record"]
   ];
   var tabs = '<div class="tabs">'+tabDefs.map(function(t){
@@ -301,7 +379,8 @@ function viewStatement(){
 
   var body = S.tab==="sheet" ? tabSheet() : S.tab==="payroll" ? tabPayroll()
     : S.tab==="points" ? tabPoints() : S.tab==="versions" ? tabVersions()
-    : S.tab==="payments" ? tabPayments() : tabRecord();
+    : S.tab==="payments" ? tabPayments()
+    : S.tab==="queries" ? tabQueries() : tabRecord();
 
   return back+headHtml+b+tabs+
     '<div class="card" style="border-top:0;border-radius:0 0 var(--radius) var(--radius);margin-top:0">'+body+'</div>';
@@ -337,7 +416,12 @@ function tabSheet(){
     ' <span style="font-weight:400;color:var(--muted)">&mdash; what the partner earned this month</span></td>'+
     '<td class="num">'+(editable
       ? '<input class="inp num" style="max-width:160px;display:inline-block" value="'+D.gross+'" data-act="draft" data-k="__gross">'
-      : '<b>'+inr(v.gross)+'</b>')+'</td><td></td></tr>';
+      : '<b>'+inr(v.gross)+'</b>')+'</td><td class="num">'+
+    (canRaise
+      ? '<button class="btn sm" data-act="raise" data-kind="gross" data-key="" data-label="Total Expenses Should Be Paid">Raise point</button>'
+      : canLog
+      ? '<button class="btn sm" data-act="logcall" data-kind="gross" data-key="" data-label="Total Expenses Should Be Paid">&#9742; Log call</button>'
+      : '')+'</td></tr>';
   if(editable)
     rows += '<tr class="memo-row"><td colspan="3" style="padding-left:26px">Basis / note: '+
       '<input class="inp" style="max-width:460px;display:inline-block" value="'+esc(D.note)+'" data-act="draft" data-k="__note" '+
@@ -407,12 +491,18 @@ function tabSheet(){
   }
 
   rows += '<tr class="final-row"><td>Final amount for payment</td><td class="num">'+inr(v.final)+'</td><td></td></tr>';
-  if(Number(st.contract.vehicles)>0)
-    rows += '<tr class="memo-row"><td>Memo &mdash; company spend per vehicle ('+st.contract.vehicles+' vehicles)</td>'+
+  /* the per-vehicle cost is what WeVois reads to compare one site against
+     another. It is not part of what the partner is owed, and showing it to him
+     invites an argument about somebody else's site. */
+  if(Number(st.contract.vehicles)>0 && S.profile.role !== "vendor")
+    rows += '<tr class="memo-row"><td>Memo &mdash; company spend per vehicle ('+st.contract.vehicles+' vehicles)'+
+      '<span class="lockpill" style="margin-left:6px">not shown to the vendor</span></td>'+
       '<td class="num">'+inr(Number(v.heads_total)/Number(st.contract.vehicles))+'</td><td></td></tr>';
 
   var acts = [];
-  if(editable) acts.push('<button class="btn primary" data-act="savedraft">Save draft</button>');
+  if(editable) acts.push('<span id="autosave" class="autosave">'+
+    (S.dirty ? 'unsaved changes' : 'saved')+'</span>'+
+    '<button class="btn" data-act="savedraft">Save now</button>');
   if(can("share") && isDraft){
     acts.push('<button class="btn go" data-act="share"'+(prPending?" disabled":"")+'>Share with vendor</button>');
     if(prPending) acts.push('<span style="font-size:12.5px;color:var(--muted)">Blocked until the payroll is posted'+
@@ -493,12 +583,18 @@ function tabPayroll(){
       ' and ESIC under challan <b>'+esc(p.esic_challan||"—")+'</b> on '+dOnly(p.esic_paid_on)+
       '. These are the same references filed with the departments.</div></div>' : "";
 
+  var readbar = ed ? '<div class="btnrow" style="margin-bottom:14px">'+
+    '<input type="file" id="pr-file" style="display:none" accept=".pdf,.txt,application/pdf">'+
+    '<button class="btn" data-act="readpayroll">&#128196; Read from a PF, ESIC or bank file</button>'+
+    '<span style="font-size:12.5px;color:var(--muted)">Fills the figures below. It never posts on its own.</span>'+
+    '</div>' : "";
+
   var act = ed ? '<div class="btnrow" style="margin-bottom:16px"><button class="btn teal" data-act="postpayroll">'+
     (p.status==="posted"?"Post a payroll correction":"Post payroll to the statement")+'</button>'+
     (p.status==="posted"?'<span style="font-size:12.5px;color:var(--muted)">A correction after sharing goes out as a new version, with the reason.</span>':'')+
     '</div>' : "";
 
-  return '<div class="card-b">'+status+vendorNote+act+
+  return '<div class="card-b">'+status+vendorNote+readbar+act+
     '<h3 style="font-size:14px;margin:4px 0 10px">Driver / helper &mdash; processed by WeVois</h3>'+
     '<div class="grid2">'+
       '<div class="fld"><label class="fl">Wages processed</label>'+fMoney("dh_pay",p.dh_pay)+'</div>'+
@@ -533,8 +629,118 @@ function tabPayroll(){
     '<div class="fld"><label class="fl">Reason &mdash; the vendor sees this</label>'+
       (ed?'<textarea class="inp" id="not_processed_reason">'+esc(p.not_processed_reason||"")+'</textarea>'
          :'<div style="padding:7px 0;color:var(--ink-2)">'+esc(p.not_processed_reason||"—")+'</div>')+'</div>'+
+    payrollBatches()+
     docSection()+
     '</div>';
+}
+
+/* the review card: what was read, what it reconciles to, what it could not
+   account for. Nothing is posted from here - the figures go into the form and
+   a person still presses Post. */
+function readReview(P){
+  function row(l, v, note){
+    return '<tr><td>'+l+(note?'<div style="font-size:12px;color:var(--muted)">'+note+'</div>':'')+
+      '</td><td class="num"><b>'+v+'</b></td></tr>';
+  }
+  var body = "", title = "", sub = "";
+  if(P.kind === "pf"){
+    title = "PF return";
+    sub = (P.period_text||"") + (P.establishment?" &middot; "+esc(P.establishment):"");
+    body = row("Members on the return", P.rows.length) +
+           row("Counted as paid", P.paid_members, P.zero_members? P.zero_members+" had nothing against them":"") +
+           row("Employee PF", inr(P.employee)) +
+           row("Employer PF", inr(P.employer), "pension share plus the balance") +
+           row("EPF wage base", inr(P.epf_wage),
+               P.stated_epf_wage===P.epf_wage ? "matches the total the return states" : "");
+  } else if(P.kind === "esic"){
+    title = "ESIC contribution history";
+    sub = (P.period_text||"") + (P.employer_code?" &middot; "+esc(P.employer_code):"");
+    body = row("Insured persons", P.paid_members) +
+           row("Employee ESIC", inr(P.employee)) +
+           row("Employer ESIC", inr(P.employer)) +
+           row("Wages", inr(P.wages));
+  } else {
+    title = "Bank salary file";
+    sub = (P.period_text||"") + (P.value_dates && P.value_dates.length===1 ? " &middot; paid "+P.value_dates[0] : "");
+    body = row("Payments in the file", P.rows.length) +
+           row("Actually processed", P.paid_members) +
+           row("Paid out", inr(P.amount), "only the payments the bank processed") +
+           (P.rejected.length ? row("Did NOT go through", inr(P.amount_all - P.amount),
+              P.rejected.map(function(r){ return esc(r.name||"(unnamed)"); }).join(", ")) : "");
+  }
+
+  var warns = (P.warnings||[]).map(function(w){
+    return '<div class="banner b-amber" style="margin:0 0 10px"><div class="ico">&#9888;</div><div>'+esc(w)+'</div></div>';
+  }).join("");
+
+  var np = (P.kind==="salary" && P.rejected.length)
+    ? '<div class="fld"><label class="fl"><input type="checkbox" id="rd-np" value="1" checked '+
+        'style="width:auto;margin-right:7px;vertical-align:middle"> Put the '+
+        inr(P.amount_all-P.amount)+' that did not go through into <b>Salary not processed from WeVois</b></label>'+
+        '<div class="hint">It is credited back to the partner rather than counted as a wage cost, with the names as the reason.</div></div>'
+    : '';
+
+  return '<div class="banner b-blue" style="margin-bottom:14px"><div class="ico">&#128196;</div><div>'+
+      '<b>'+title+' read from '+esc(P.filename||"the file")+'</b>'+
+      (sub?esc(sub.replace(/&middot;/g,"·"))+'<br>':'')+
+      'Nothing is posted yet. Check these against the document, choose where they belong, and they go into the '+
+      'form for you to post.</div></div>'+
+    warns+
+    '<table style="margin-bottom:14px"><tbody>'+body+'</tbody></table>'+
+    '<div class="fld"><label class="fl">Where do these people belong?</label>'+
+      '<select class="inp" id="rd-split" data-act="rd-split">'+
+        '<option value="dh">All driver / helper</option>'+
+        '<option value="stf">All staff</option>'+
+        '<option value="split">Split between the two</option>'+
+      '</select>'+
+      '<div class="hint">Neither the PF return nor the ESIC statement nor the bank file says which is which, '+
+      'so this is the one thing the file cannot tell us.</div></div>'+
+    '<div class="fld" id="rd-split-box" style="display:none">'+
+      '<label class="fl">How many of the '+P.paid_members+' are staff?</label>'+
+      '<input class="inp num" id="rd-stf-heads" value="0">'+
+      '<div class="hint">The amounts are apportioned by headcount. Adjust them by hand afterwards if the split is not even.</div></div>'+
+    np;
+}
+
+/* ------------------------------------------------- payroll entries (top-ups) */
+/* Salary that arrives in pieces. The first posting is entry 1; people left off
+   that run and processed later go on as their own entry, with their own challan
+   and their own date, instead of quietly overwriting the month. */
+function payrollBatches(){
+  var st = S.stmt, bs = st.payroll_batches || [];
+  var posted = st.payroll && st.payroll.status === "posted";
+  var may = can("post_payroll") && st.statement.status !== "paid";
+  if(!posted && !bs.length) return "";
+
+  var rows = bs.map(function(b){
+    var n = (Number(b.dh_heads)||0) + (Number(b.stf_heads)||0);
+    return '<tr><td><b>'+(b.seq===1?"The month as posted":"Top-up "+b.seq)+'</b>'+
+      '<div style="font-size:12px;color:var(--muted)">'+esc(b.posted_by||"")+' &middot; '+dt(b.posted_at)+
+      (b.processed_on?' &middot; processed '+dOnly(b.processed_on):'')+'</div>'+
+      (b.note?'<div style="font-size:12.5px;color:var(--ink-2);margin-top:4px">'+esc(b.note)+'</div>':'')+'</td>'+
+      '<td class="num">'+n+'</td>'+
+      '<td class="num">'+inr(Number(b.dh_pay)+Number(b.stf_pay))+'</td>'+
+      '<td style="font-size:12px;color:var(--muted)">'+esc(b.pf_trrn||"—")+'<br>'+esc(b.esic_challan||"—")+'</td></tr>';
+  }).join("");
+
+  var tot = bs.reduce(function(a,b){
+    return {n: a.n + (Number(b.dh_heads)||0) + (Number(b.stf_heads)||0),
+            p: a.p + Number(b.dh_pay) + Number(b.stf_pay)}; }, {n:0,p:0});
+
+  return '<h3 style="font-size:14px;margin:22px 0 10px">How this month\'s payroll was built up</h3>'+
+    '<div class="banner b-blue" style="margin-bottom:12px"><div class="ico">&#8721;</div><div>'+
+    '<b>Late salary goes on as its own entry, not over the top of the month</b>'+
+    'People left off the first run and processed later keep their own challan, their own date and their own note. '+
+    'The figures above are the sum of the entries below, so the statement never disagrees with the challans behind it. '+
+    'A top-up on a statement the vendor already has waits for the next version, like any other correction.</div></div>'+
+    (may?'<div class="btnrow" style="margin-bottom:12px">'+
+      '<button class="btn teal" data-act="topup">Add salary processed late</button></div>':'')+
+    '<table><thead><tr><th>Entry</th><th class="num">Persons</th><th class="num">Wages + salary</th>'+
+    '<th>PF TRRN / ESIC challan</th></tr></thead><tbody>'+
+    (rows||'<tr><td colspan="4" class="empty">Nothing posted yet.</td></tr>')+
+    (bs.length>1?'<tr class="final-row"><td><b>Total</b></td><td class="num"><b>'+tot.n+'</b></td>'+
+      '<td class="num"><b>'+inr(tot.p)+'</b></td><td></td></tr>':'')+
+    '</tbody></table>';
 }
 
 /* -------------------------------------------------------- attached files */
@@ -548,7 +754,12 @@ function fileSize(n){
 
 function docSection(){
   var st = S.stmt, docs = st.documents || [];
-  var ed = (can("post_payroll") || can("edit_draft")) && st.statement.status !== "paid";
+  var staff  = can("post_payroll") || can("edit_draft");
+  var isVend = S.profile.role === "vendor";
+  /* the partner can put his own bills up here too - that is the whole point of
+     "send me the bill" not being a phone call any more. He can take back only
+     what he put up himself; staff can remove any of it, with a reason. */
+  var ed = (staff || isVend) && st.statement.status !== "paid";
 
   var rows = docs.map(function(d){
     return '<tr>'+
@@ -557,19 +768,25 @@ function docSection(){
       '<td><span class="chip c-blue">'+esc(DOC_KIND[d.kind]||d.kind)+'</span></td>'+
       '<td style="font-size:12.5px;color:var(--muted)">'+fileSize(d.size_bytes)+'</td>'+
       '<td class="num"><button class="btn sm" data-act="docopen" data-p="'+esc(d.path)+'">Open</button>'+
-        (ed?' <button class="btn sm danger" data-act="docdel" data-id="'+d.id+'" data-n="'+esc(d.filename)+'">Remove</button>':'')+
+        ((ed && (staff || d.uploaded_uid === S.profile.id))
+          ? ' <button class="btn sm danger" data-act="docdel" data-id="'+d.id+'" data-n="'+esc(d.filename)+'">Remove</button>':'')+
       '</td></tr>'; }).join("");
 
   if(!rows) rows = '<tr><td colspan="4" class="empty">'+
-    (ed ? 'Nothing attached yet. Add the payroll sheet, the PF ECR or the ESIC challan and the vendor can open it himself.'
+    (isVend ? 'Nothing attached yet. Put up a bill, a log sheet or a photo and WeVois can open it from here.'
+     : ed ? 'Nothing attached yet. Add the payroll sheet, the PF ECR or the ESIC challan and the vendor can open it himself.'
         : 'No file attached to this month.')+'</td></tr>';
 
   return '<h3 style="font-size:14px;margin:22px 0 10px">Payroll, PF and ESIC files</h3>'+
     '<div class="banner b-blue" style="margin-bottom:12px"><div class="ico">&#128206;</div><div>'+
     '<b>The proof, attached to the month it belongs to</b>'+
-    'Excel or PDF &mdash; the payroll sheet, the PF ECR, the ESIC challan. The vendor opens them from his own copy of '+
-    'this statement, so &ldquo;send me the payroll again&rdquo; stops being a phone call. Every attachment and every removal '+
-    'is written into the record below.</div></div>'+
+    (isVend
+      ? 'Bills, log sheets, photos &mdash; anything backing up what you have raised. WeVois opens them from here, so '+
+        '&ldquo;send it again on WhatsApp&rdquo; stops being a phone call. You can take back a file you put up yourself; '+
+        'a file WeVois attached stays.'
+      : 'Excel or PDF &mdash; the payroll sheet, the PF ECR, the ESIC challan. The vendor opens them from his own copy of '+
+        'this statement, and he can attach his own bills here too. Every attachment and every removal is written into '+
+        'the record below.')+'</div></div>'+
     (ed ? '<div class="btnrow" style="margin-bottom:12px">'+
           '<input type="file" id="doc-file" style="display:none" '+
             'accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,application/pdf,image/*,'+
@@ -691,6 +908,67 @@ function tabPayments(){
     'and the balance stays visible until it clears.</div></div>'+
     '<table><thead><tr><th>Date</th><th>UTR / reference</th><th>Recorded by</th><th class="num">Amount</th></tr></thead>'+
     '<tbody>'+rows+'</tbody></table>';
+}
+
+
+/* ----------------------------------------------------------- tab: queries */
+/* Anything the vendor wants to raise that is not a figure on this month's
+   sheet. It deliberately does not put the settlement under query, so a
+   question about next month's vehicles cannot hold up this month's money. */
+function isQuery(p){ return p.target_kind === "general"; }
+function openQueries(st){
+  return (st.points||[]).filter(function(p){ return isQuery(p) && p.status === "open"; }).length;
+}
+
+function remarkList(p){
+  var rs = p.remarks || [];
+  var out = rs.map(function(r){
+    return '<div class="rmk '+(r.by_role==="vendor"?"them":"us")+'">'+
+      '<div class="rmk-h">'+esc(r.by_name)+' <span>'+esc(ROLE_LABEL[r.by_role]||r.by_role)+
+      ' &middot; '+dt(r.at)+'</span></div>'+
+      '<div class="rmk-b">'+esc(r.body)+'</div></div>'; }).join("");
+  return out ? '<div class="rmks">'+out+'</div>' : "";
+}
+
+function tabQueries(){
+  var st = S.stmt;
+  var qs = (st.points||[]).filter(isQuery);
+  var mayRaise  = can("raise") && S.profile.role === "vendor";
+  var mayAnswer = can("resolve");
+  var mayRemark = ["vendor","manager","accounts","admin"].indexOf(S.profile.role) >= 0;
+
+  var out = qs.map(function(p){
+    var open = p.status === "open";
+    return '<div class="pt '+(open?"open":"done")+'">'+
+      '<div class="pt-h">'+
+        (open ? '<span class="chip c-amber"><span class="d"></span>Waiting for an answer</span>'
+              : '<span class="chip c-green"><span class="d"></span>Answered</span>')+
+        '<div style="flex:1"></div><span class="when">'+esc(p.raised_by)+' &middot; '+dt(p.raised_at)+'</span></div>'+
+      '<div class="pt-body">'+esc(p.note)+'</div>'+
+      (p.attachment?'<div class="hint">Attached: '+esc(p.attachment)+'</div>':'')+
+      (p.decision
+        ? '<div class="pt-ans"><b>'+esc(p.decided_by||"")+' answered</b> <span class="when">'+dt(p.decided_at)+'</span>'+
+          '<div>'+esc(p.decision)+'</div></div>' : '')+
+      remarkList(p)+
+      '<div class="btnrow" style="margin-top:10px">'+
+        (mayAnswer && open ? '<button class="btn sm primary" data-act="answerq" data-id="'+p.id+'">Answer this</button>' : '')+
+        (mayAnswer && !open ? '<button class="btn sm" data-act="answerq" data-id="'+p.id+'">Revise the answer</button>' : '')+
+        (mayRemark ? '<button class="btn sm" data-act="remark" data-id="'+p.id+'">Add a remark</button>' : '')+
+      '</div></div>';
+  }).join("");
+
+  var head = '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#128172;</div><div>'+
+    '<b>Anything that is not a figure on this sheet</b>'+
+    'Vehicles, drivers, fuel cards, documents, next month &mdash; whatever needs saying that is not a dispute about an '+
+    'amount. It is written down against this month and answered in writing, so it never becomes '+
+    '&ldquo;I told you on the phone&rdquo;. Raising one here does <b>not</b> hold up the settlement.'+
+    (mayAnswer?' A point about an amount belongs on the <b>Points</b> tab, where the figure can actually move.':'')+
+    '</div></div>';
+
+  return '<div class="card-b">'+head+
+    (mayRaise?'<div class="btnrow" style="margin-bottom:16px">'+
+      '<button class="btn primary" data-act="raiseq">Raise a query</button></div>':'')+
+    (out || '<div class="empty">No queries on this month.</div>')+'</div>';
 }
 
 /* ------------------------------------------------------------ tab: record */

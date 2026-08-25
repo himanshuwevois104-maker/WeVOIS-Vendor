@@ -7,7 +7,7 @@
 
 var SB = null;
 var S = {
-  user:null, profile:null, caps:[],
+  user:null, profile:null, caps:[], site:null, dirty:false, saving:false, read:null,
   settings:{window_days:5, deemed_approve:true, variance_pct:15},
   vendors:[], sites:[], contracts:[], adjTypes:[], profiles:[], invites:[], audit:[], heads:[],
   period:null, list:[], open:null, stmt:null, tab:"sheet", adminTab:"users",
