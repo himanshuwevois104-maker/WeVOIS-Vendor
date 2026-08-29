@@ -22,6 +22,7 @@ the two cannot share a folder, because a static host serves one `index.html`.
    | `VS-PATCH-3.sql` | the administrator can edit a site and a tenure after creating them |
    | `VS-PATCH-4.sql` | the vendor manager can post the processed salary, PF and ESIC |
    | `VS-PATCH-5.sql` | points on the earned amount, a queries thread, vendor uploads, payroll top-ups |
+   | `VS-PATCH-6.sql` | email when a month goes out; confirmation from the CEO or VP |
 
    Each ends by printing a verification row. `VS-SETUP.sql` prints
    `13 | 16 | 21 | 0 | 0 | 0 | t`; the patches print `t` or `1` across.
@@ -46,6 +47,8 @@ the two cannot share a folder, because a static host serves one `index.html`.
    `service_role` key must never go in this file; it bypasses every policy.
 
 `GO-LIVE.md` is the full walkthrough, including deployment and troubleshooting.
+`SETUP-MAIL.md` covers sending the notification mail from your own address.
+`VS-CHECK-PATCHES.sql` tells you which patches this database has actually had.
 
 ## What the host serves
 
@@ -84,5 +87,5 @@ him; raises points, confirms what was said on a call, approves.
 
 The database enforces all of it. Hiding a button is not security: every rule
 here is a row-level policy or a check inside the function that performs the
-write, proved by 330 assertions running as the `authenticated` role on
+write, proved by 385 assertions running as the `authenticated` role on
 PostgreSQL 16.

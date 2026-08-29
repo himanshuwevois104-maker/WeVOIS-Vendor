@@ -111,6 +111,32 @@ async function run(){
     "Run it in the SQL editor. It creates your ten sites with their own booking heads.");
   else if(sites < 10) add("wait","Fewer than ten sites","expected Kuchaman, Parbatsar, Nawa, Bundi, Vidhisa, Dei, Laxmangarh, Jhunjhunu, Chirawa, Sujalpur");
 
+
+  /* which patches have actually been run against this database */
+  var PATCHES = [
+    ["VS-PATCH-1.sql","vs_add_document","payroll and PF/ESIC file attachments"],
+    ["VS-PATCH-2.sql","vs_sees_site","keeping each vendor to his own sites"],
+    ["VS-PATCH-3.sql","vs_set_site","editing a site and its tenures"],
+    ["VS-PATCH-5.sql","vs_raise_query","queries, vendor uploads and payroll top-ups"],
+    ["VS-PATCH-6.sql","vs_statement_extra","email notifications and CEO/VP confirmation"]
+  ];
+  var missing = [];
+  for(var i=0;i<PATCHES.length;i++){
+    var p = PATCHES[i];
+    var r = await SB.rpc(p[1], {});
+    var m = ((r.error && (r.error.message||"")) + " " + ((r.error && r.error.code)||""));
+    if(/could not find the function|does not exist|PGRST202|42883/i.test(m)) missing.push(p);
+  }
+  var cp = await SB.from("vs_caps").select("cap").eq("role","manager").eq("cap","post_payroll");
+  if(!cp.error && (!cp.data || !cp.data.length))
+    missing.push(["VS-PATCH-4.sql","","the vendor manager posting payroll"]);
+  missing.sort(function(a,b){ return a[0] < b[0] ? -1 : 1; });
+
+  if(!missing.length) add("ok","Every patch has been run","the database matches the app");
+  else missing.forEach(function(p){
+    add("bad","NOT RUN: "+p[0], "without it, "+p[2]+" will fail with a database error when somebody tries to use it");
+  });
+
   var heads = await SB.from("vs_heads").select("site_id");
   if(!heads.error) add((heads.data||[]).length>0?"ok":"bad",
     "Booking heads across all sites: "+((heads.data||[]).length),

@@ -38,7 +38,7 @@ function viewAdmin(){
   var tabs = '<div class="tabs">'+[
     ["users","Users &amp; roles"],["vendors","Vendors"],["sites","Sites &amp; tenures"],
     ["settle","Settlements"],["heads","Booking heads"],["rules","Settlement rules"],
-    ["matrix","Who can do what"],["audit","Audit log"]
+    ["matrix","Who can do what"],["mail","Mail"],["audit","Audit log"]
   ].map(function(x){
     return '<button data-act="atab" data-v="'+x[0]+'" class="'+(t===x[0]?"on":"")+'">'+x[1]+'</button>'; }).join("")+'</div>';
 
@@ -50,6 +50,7 @@ function viewAdmin(){
     : t==="heads"   ? adminHeads()
     : t==="rules"   ? adminRules()
     : t==="matrix"  ? adminMatrix()
+    : t==="mail"    ? adminMail()
     :                 adminAudit();
 
   return '<div class="page-h"><div><h1>Administration</h1>'+
@@ -284,6 +285,57 @@ function adminMatrix(){
     '<table class="matrix"><thead>'+head+'</thead><tbody>'+body+'</tbody></table>';
 }
 
+function adminMail(){
+  var s = S.settings || {};
+  var ready = !!(s.mail_from||"").trim();
+  var rows = (S.mail||[]).map(function(m){
+    var chip = m.status==="sent"  ? '<span class="chip c-green"><span class="d"></span>sent</span>'
+             : m.status==="failed"? '<span class="chip c-red"><span class="d"></span>failed</span>'
+             : m.status==="skipped"?'<span class="chip c-grey"><span class="d"></span>not sent - notifications off</span>'
+             :                      '<span class="chip c-amber"><span class="d"></span>waiting</span>';
+    return '<tr><td><b>'+esc(m.to_name||m.to_email)+'</b>'+
+      '<div style="font-size:12px;color:var(--muted)">'+esc(m.to_email)+
+      (m.to_role?' &middot; '+esc(ROLE_LABEL[m.to_role]||m.to_role):'')+'</div></td>'+
+      '<td style="font-size:13px">'+esc(m.subject)+
+        (m.error?'<div style="font-size:12px;color:var(--red)">'+esc(m.error)+'</div>':'')+'</td>'+
+      '<td>'+chip+'</td>'+
+      '<td style="font-size:12px;color:var(--muted);white-space:nowrap">'+dt(m.sent_at||m.created_at)+'</td></tr>';
+  }).join("");
+
+  return '<div class="card-b">'+
+    (ready?'':'<div class="banner b-amber" style="margin-bottom:16px"><div class="ico">&#9888;</div><div>'+
+      '<b>No sending address yet</b>Messages are being written down but nothing is going out. '+
+      'Fill in the address below and follow <b>SETUP-MAIL.md</b> to deploy the sender. Nothing already queued is lost.'+
+      '</div></div>')+
+    '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#9993;</div><div>'+
+    '<b>Who is told, and when</b>'+
+    'Sharing a month, or issuing a revised version, emails that site&rsquo;s vendor and both observers. '+
+    'The vendor only ever hears about his own sites; the CEO and the VP hear about all of them. '+
+    'Asking for a confirmation emails the CEO and the VP. '+
+    'The portal writes every message down whether or not it can send it, so nothing is ever silently dropped.'+
+    '</div></div>'+
+    '<div class="grid2">'+
+      '<div class="fld"><label class="fl">From address</label>'+
+        '<input class="inp" id="m-from" value="'+esc(s.mail_from||"")+'" placeholder="himanshu.wevois104@gmail.com">'+
+        '<div class="hint">The same mailbox the sender signs in as. Sending as an address you do not own gets mail marked as spam.</div></div>'+
+      '<div class="fld"><label class="fl">From name</label>'+
+        '<input class="inp" id="m-name" value="'+esc(s.mail_from_nm||"WeVois Vendor Settlement")+'"></div>'+
+    '</div>'+
+    '<div class="fld"><label class="fl">Address of this portal</label>'+
+      '<input class="inp" id="m-url" value="'+esc(s.portal_url||"")+'" placeholder="https://...">'+
+      '<div class="hint">So the mail can link back here. Without it the mail still goes, just with no link.</div></div>'+
+    '<div class="fld"><label class="fl"><input type="checkbox" id="m-on"'+(s.mail_on===false?"":" checked")+
+      ' style="width:auto;margin-right:7px;vertical-align:middle"> Send notifications</label>'+
+      '<div class="hint">Off means messages are still written down and marked <b>not sent</b>, so you can see what would have gone.</div></div>'+
+    '<div class="btnrow" style="margin-bottom:4px">'+
+      '<button class="btn primary" data-act="mailsave">Save</button>'+
+      '<button class="btn" data-act="mailsend">Send the queue now</button>'+
+      '<span style="font-size:12.5px;color:var(--muted)">The sender normally runs by itself every few minutes.</span>'+
+    '</div></div>'+
+    '<table><thead><tr><th>To</th><th>Subject</th><th>State</th><th>When</th></tr></thead><tbody>'+
+    (rows||'<tr><td colspan="4" class="empty">Nothing has been queued yet.</td></tr>')+'</tbody></table>';
+}
+
 function adminAudit(){
   var rows = S.audit.map(function(a){
     return '<tr><td style="white-space:nowrap;font-size:12.5px;color:var(--muted)">'+dt(a.at)+'</td>'+
@@ -453,8 +505,20 @@ document.addEventListener("click", async function(e){
     var qfile = document.getElementById("q-file"), qatt = "";
     if(qfile && qfile.files && qfile.files[0]){
       var qup = await uploadDoc(qfile.files[0], "bill", true);
-      if(!qup.ok) return;
-      qatt = qfile.files[0].name;
+      if(qup.ok){
+        qatt = qfile.files[0].name;
+      } else {
+        /* the file could not go up. Losing the point as well would be the worse
+           of the two failures, so offer to send it with the file named instead
+           of attached, and say so plainly. */
+        if(!window.confirm(
+            "The file could not be attached.\n\n" +
+            "Send the point anyway, without it? The file name will be written into the point so " +
+            "WeVois knows what to ask you for.\n\n" +
+            "OK  - send the point now\n" +
+            "Cancel - keep this open and try the file again")) return;
+        qatt = qfile.files[0].name + " (could not be uploaded)";
+      }
     }
     var r5 = await call("vs_raise_point", {
       p_stmt:S.open, p_kind:tv[0], p_key:tv[1]||"", p_label:tv[2]||"",
@@ -624,8 +688,12 @@ document.addEventListener("click", async function(e){
     var qname = "";
     if(qf && qf.files && qf.files[0]){
       var up = await uploadDoc(qf.files[0], "other", true);
-      if(!up.ok) return;
-      qname = qf.files[0].name;
+      if(up.ok) qname = qf.files[0].name;
+      else {
+        if(!window.confirm(
+            "The file could not be attached.\n\nSend the query anyway, without it?")) return;
+        qname = qf.files[0].name + " (could not be uploaded)";
+      }
     }
     var rQ = await call("vs_raise_query", {p_stmt:S.open, p_note:qnote, p_attach:qname},
       "Query sent - WeVois will answer in writing");
@@ -664,6 +732,103 @@ document.addEventListener("click", async function(e){
   if(a==="remark-go"){
     var rRK = await call("vs_add_remark", {p_point:val("rk-id"), p_body:val("rk-text")}, "Remark added");
     if(rRK.ok){ closeModal(); await refresh(true); }
+    return;
+  }
+
+  /* ---- asking the CEO / VP, and their answer ---- */
+  if(a==="askappr"){
+    modal("Ask the CEO or the VP",
+      '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#9878;</div><div>'+
+      'Both of them are emailed. Either can answer, and whoever does is named on the record with the date. '+
+      'Leave the amount blank to ask a plain question.</div></div>'+
+      '<div class="fld"><label class="fl">What are you asking?</label>'+
+        '<textarea class="inp" id="ap-q" placeholder="Be specific. This is the text they answer."></textarea></div>'+
+      '<div class="fld"><label class="fl">Is there an amount to confirm?</label>'+
+        '<select class="inp" id="ap-has" data-act="ap-has">'+
+          '<option value="0">No &mdash; it is a question</option>'+
+          '<option value="1">Yes &mdash; confirm a figure</option>'+
+        '</select></div>'+
+      '<div id="ap-money" style="display:none">'+
+        '<div class="grid2">'+
+          '<div class="fld"><label class="fl">Amount</label><input class="inp num" id="ap-amt" value="0"></div>'+
+          '<div class="fld"><label class="fl">Which way?</label><select class="inp" id="ap-eff">'+
+            '<option value="add">Added to the partner</option>'+
+            '<option value="deduct">Deducted from the partner</option></select></div>'+
+        '</div>'+
+        '<div class="fld"><label class="fl">Label &mdash; this becomes the line the vendor reads</label>'+
+          '<input class="inp" id="ap-label" placeholder="e.g. Extra tipper hire"></div>'+
+        '<div class="banner b-amber" style="margin:0"><div class="ico">&#9888;</div><div>'+
+        'If they confirm it, this line goes onto the statement by itself'+
+        (S.stmt && S.stmt.statement.status==="draft" ? ' straight away.' :
+         ' when you issue the next version.')+'</div></div>'+
+      '</div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="askappr-go">Send it to them</button>');
+    return;
+  }
+  if(a==="askappr-go"){
+    var hasAmt = val("ap-has") === "1";
+    if(!val("ap-q").trim()){ toast("Write down what you are asking."); return; }
+    var rAP = await call("vs_request_approval", {
+      p_stmt:S.open, p_question:val("ap-q"),
+      p_amount: hasAmt ? num("ap-amt") : null,
+      p_effect: hasAmt ? val("ap-eff") : null,
+      p_label:  hasAmt ? val("ap-label") : ""
+    }, "Sent - the CEO and the VP have been emailed");
+    if(rAP.ok){ closeModal(); S.tab="approvals"; await refresh(true); }
+    return;
+  }
+  if(a==="decide"){
+    var did = D("id"), ok = D("ok")==="1";
+    var dap = apprList().filter(function(x){ return x.id===did; })[0] || {};
+    modal(ok ? "Confirm this" : "Decline this",
+      '<div class="banner b-grey" style="margin-bottom:14px"><div class="ico">&#10077;</div><div>'+
+      '<b>'+esc(dap.asked_by||"")+' asked</b>'+esc(dap.question||"")+'</div></div>'+
+      (dap.amount != null
+        ? '<div class="banner '+(ok?"b-amber":"b-grey")+'" style="margin:0 0 14px"><div class="ico">&#8377;</div><div>'+
+          '<b>'+esc(dap.adj_label||"")+' &mdash; '+inr(dap.amount)+' '+
+          (dap.effect==="add"?"added to":"deducted from")+' the partner</b>'+
+          (ok ? 'Confirming writes this line onto the statement with your name and today&rsquo;s date as its reason.'
+              : 'Declining writes nothing. The refusal and your reason stay on the record.')+'</div></div>'
+        : '')+
+      '<div class="fld"><label class="fl">'+(ok?'Note (optional)':'Why are you declining? &mdash; required')+'</label>'+
+        '<textarea class="inp" id="dc-note"></textarea></div>'+
+      '<input type="hidden" id="dc-id" value="'+esc(did)+'">'+
+      '<input type="hidden" id="dc-ok" value="'+(ok?"1":"0")+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn '+(ok?"go":"danger")+'" data-act="decide-go">'+(ok?"Confirm it":"Decline it")+'</button>');
+    return;
+  }
+  if(a==="decide-go"){
+    var dOk = val("dc-ok")==="1";
+    if(!dOk && !val("dc-note").trim()){ toast("Say why you are declining. That reason is the record."); return; }
+    var rD = await call("vs_decide_approval",
+      {p_id:val("dc-id"), p_ok:dOk, p_note:val("dc-note")}, null, "recording...");
+    if(rD.ok){ closeModal(); toast(String(rD.data)); await refresh(true); }
+    return;
+  }
+
+  /* ---- admin: mail ---- */
+  if(a==="mailsave"){
+    var rM = await call("vs_save_mail_settings", {
+      p_from:val("m-from"), p_name:val("m-name"), p_url:val("m-url"),
+      p_on: document.getElementById("m-on").checked }, "Mail settings saved");
+    if(rM.ok) await refresh(false);
+    return;
+  }
+  if(a==="mailsend"){
+    var url = (window.VS_URL||"").replace(".supabase.co", ".functions.supabase.co") + "/send-mail";
+    toast("Asking the sender to run...");
+    try{
+      var res = await fetch(url, {method:"POST", headers:{
+        "Authorization":"Bearer "+(window.VS_ANON||""), "Content-Type":"application/json"}});
+      var j = await res.json();
+      toast(j.ok ? ("Sent "+j.sent+(j.failed?", "+j.failed+" failed":"")) 
+                 : (j.reason || j.error || "The sender is not set up yet."));
+    }catch(e){
+      toast("Could not reach the sender. It may not be deployed yet - see SETUP-MAIL.md.");
+    }
+    await refresh(false);
     return;
   }
 
@@ -1377,8 +1542,14 @@ async function uploadDoc(file, kindOverride, quiet){
   }catch(err){ up = {error:err}; }
   if(up && up.error){
     docStatus("");
-    toast("Upload failed. " + (up.error.message || ""));
-    return {ok:false};
+    var msg = String(up.error.message || "");
+    if(/row-level security|not authorized|violates/i.test(msg)){
+      msg = (S.profile && S.profile.role === "vendor")
+        ? "The portal is not set up to accept files from vendors yet. Tell WeVois: VS-PATCH-5.sql has not been run on the database."
+        : "The storage rules refused that file. If VS-PATCH-5.sql has not been run yet, run it - that is what lets a vendor attach.";
+    }
+    toast(msg);
+    return {ok:false, error:up.error, denied:true};
   }
 
   var r = await call("vs_add_document", {
@@ -1413,6 +1584,11 @@ document.addEventListener("change", async function(e){
       '<button class="btn primary" data-act="useread">Use these figures</button>');
     /* the document itself belongs on the record beside the figures it produced */
     try{ await uploadDoc(pf, parsed.kind === "salary" ? "payroll" : parsed.kind, true); }catch(e2){}
+    return;
+  }
+  if(e.target && e.target.id === "ap-has"){
+    var mb = document.getElementById("ap-money");
+    if(mb) mb.style.display = (e.target.value === "1") ? "" : "none";
     return;
   }
   if(e.target && e.target.id === "rd-split"){
@@ -1457,6 +1633,8 @@ async function boot(){
 
   var cp = await SB.from("vs_caps").select("cap").eq("role", S.profile.role);
   S.caps = (cp.data||[]).map(function(x){ return x.cap; });
+
+  try{ await checkSchema(); }catch(e){ S.missing = []; }
 
   await loadAll();
   render();

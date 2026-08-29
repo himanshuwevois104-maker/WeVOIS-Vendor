@@ -31,7 +31,7 @@ function render(){
   else if(S.profile.role==="accounts") body = viewAccountsHome();
   else                                 body = viewManagerHome();
 
-  document.getElementById("app").innerHTML = bar + '<div class="wrap">'+body+'</div>';
+  document.getElementById("app").innerHTML = bar + '<div class="wrap">'+schemaBanner()+body+'</div>';
 }
 
 function observerBanner(){
@@ -374,13 +374,20 @@ function viewStatement(){
           (st.points||[]).filter(isQuery).length+'</span>':''))],
     ["record","Full record"]
   ];
+  /* the vendor never sees what WeVois asked its own leadership */
+  if(can("view_all"))
+    tabDefs.splice(tabDefs.length-1, 0,
+      ["approvals","CEO / VP"+(openApprovals()?'<span class="cnt" style="background:var(--amber)">'+
+        openApprovals()+'</span>':(apprList().length?'<span class="cnt" style="background:var(--faint)">'+
+        apprList().length+'</span>':''))]);
   var tabs = '<div class="tabs">'+tabDefs.map(function(t){
     return '<button data-act="tab" data-v="'+t[0]+'" class="'+(S.tab===t[0]?"on":"")+'">'+t[1]+'</button>'; }).join("")+'</div>';
 
   var body = S.tab==="sheet" ? tabSheet() : S.tab==="payroll" ? tabPayroll()
     : S.tab==="points" ? tabPoints() : S.tab==="versions" ? tabVersions()
     : S.tab==="payments" ? tabPayments()
-    : S.tab==="queries" ? tabQueries() : tabRecord();
+    : S.tab==="queries" ? tabQueries()
+    : S.tab==="approvals" ? tabApprovals() : tabRecord();
 
   return back+headHtml+b+tabs+
     '<div class="card" style="border-top:0;border-radius:0 0 var(--radius) var(--radius);margin-top:0">'+body+'</div>';
@@ -969,6 +976,72 @@ function tabQueries(){
     (mayRaise?'<div class="btnrow" style="margin-bottom:16px">'+
       '<button class="btn primary" data-act="raiseq">Raise a query</button></div>':'')+
     (out || '<div class="empty">No queries on this month.</div>')+'</div>';
+}
+
+
+/* -------------------------------------------------------- tab: approvals */
+/* The vendor manager puts a question or a figure to the CEO or the VP. This is
+   the one place an observer account may write, and only here: they can answer
+   what was put to them, and nothing else. */
+function apprList(){
+  return (S.extra && S.extra.approvals) || [];
+}
+function openApprovals(){
+  return apprList().filter(function(a){ return a.status === "open"; }).length;
+}
+var APPR_CHIP = {
+  open:'<span class="chip c-amber"><span class="d"></span>Waiting on the CEO / VP</span>',
+  approved:'<span class="chip c-green"><span class="d"></span>Confirmed</span>',
+  declined:'<span class="chip c-red"><span class="d"></span>Declined</span>'
+};
+
+function tabApprovals(){
+  var st = S.stmt, list = apprList();
+  var mayAsk    = can("revise");
+  var mayDecide = can("approve_request");
+  var draft = st.statement.status === "draft";
+
+  var out = list.map(function(a){
+    var amt = a.amount != null
+      ? '<div class="pt-body"><b>'+esc(a.adj_label)+'</b> &mdash; '+
+        (a.effect==="add"?"added to":"deducted from")+' the partner, <b>'+inr(a.amount)+'</b>'+
+        (a.status==="approved"
+          ? (a.applied
+              ? '<div class="hint">On the statement'+(a.applied_in?' from version '+a.applied_in:'')+'.</div>'
+              : '<div class="hint">Waiting for the next version to be issued.</div>')
+          : '')+'</div>' : "";
+    return '<div class="pt '+(a.status==="open"?"open":a.status==="declined"?"":"done")+'">'+
+      '<div class="pt-h">'+(APPR_CHIP[a.status]||"")+
+        '<div style="flex:1"></div><span class="when">'+esc(a.asked_by)+' asked &middot; '+dt(a.asked_at)+'</span></div>'+
+      '<div class="pt-body">'+esc(a.question)+'</div>'+ amt +
+      (a.decided_by
+        ? '<div class="pt-ans"><b>'+esc(a.decided_by)+' ('+esc(ROLE_LABEL[a.decided_role]||a.decided_role||"")+') '+
+          (a.status==="approved"?"confirmed":"declined")+'</b> <span class="when">'+dt(a.decided_at)+'</span>'+
+          (a.decision_note?'<div>'+esc(a.decision_note)+'</div>':'')+'</div>' : '')+
+      (mayDecide && a.status==="open"
+        ? '<div class="btnrow" style="margin-top:10px">'+
+          '<button class="btn sm go" data-act="decide" data-id="'+a.id+'" data-ok="1">Confirm</button>'+
+          '<button class="btn sm danger" data-act="decide" data-id="'+a.id+'" data-ok="0">Decline</button></div>'
+        : '')+
+      '</div>';
+  }).join("");
+
+  var head = '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#9878;</div><div>'+
+    '<b>Confirmation from the CEO or the VP, in writing</b>'+
+    (mayDecide
+      ? 'Somebody has asked you to confirm something on this month. Your answer is recorded against your name and '+
+        'the date. Where a request carries an <b>amount</b>, confirming it writes that line onto the statement '+
+        'itself &mdash; on a draft straight away, on a statement the vendor already holds when the next version '+
+        'goes out. Declining writes nothing, but the refusal and your reason stay on the record.'
+      : 'Put a question or a figure to them and get an answer that is written down rather than remembered. '+
+        'If the request carries an amount and they confirm it, that line appears on the statement by itself, '+
+        'with their name and the date as its reason'+(draft?'':' when you issue the next version')+'.')+
+    '</div></div>';
+
+  return '<div class="card-b">'+head+
+    (mayAsk?'<div class="btnrow" style="margin-bottom:16px">'+
+      '<button class="btn primary" data-act="askappr">Ask the CEO / VP</button></div>':'')+
+    (out || '<div class="empty">Nothing has been put to them on this month.</div>')+'</div>';
 }
 
 /* ------------------------------------------------------------ tab: record */

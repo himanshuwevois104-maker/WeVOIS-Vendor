@@ -7,7 +7,7 @@
 
 var SB = null;
 var S = {
-  user:null, profile:null, caps:[], site:null, dirty:false, saving:false, read:null,
+  user:null, profile:null, caps:[], site:null, dirty:false, saving:false, read:null, extra:{approvals:[],mail:[]}, mail:[], missing:null,
   settings:{window_days:5, deemed_approve:true, variance_pct:15},
   vendors:[], sites:[], contracts:[], adjTypes:[], profiles:[], invites:[], audit:[], heads:[],
   period:null, list:[], open:null, stmt:null, tab:"sheet", adminTab:"users",
@@ -113,6 +113,64 @@ async function call(fn, args, okMsg, what){
   }catch(e){ toast(friendly(e)); return {ok:false, error:e}; }
 }
 
+
+/* ---------------------------------------------------------- schema check */
+/* The app and the database are deployed separately, so they can drift: a new
+   build talking to a database that has not had the matching patch run. When
+   that happens the only symptom is a raw Postgres error at the moment somebody
+   tries to use the feature - which is how a vendor came to see
+   "new row violates row-level security policy" while attaching a bill.
+   So the app asks, once, at sign-in, and says plainly what is missing. */
+var PATCHES = [
+  {file:"VS-PATCH-1.sql", fn:"vs_add_document",     what:"payroll and PF/ESIC file attachments"},
+  {file:"VS-PATCH-2.sql", fn:"vs_sees_site",        what:"keeping each vendor to his own sites"},
+  {file:"VS-PATCH-3.sql", fn:"vs_set_site",         what:"editing a site and its tenures"},
+  {file:"VS-PATCH-5.sql", fn:"vs_raise_query",      what:"queries, vendor uploads and payroll top-ups"},
+  {file:"VS-PATCH-6.sql", fn:"vs_statement_extra",  what:"email notifications and CEO/VP confirmation"}
+];
+
+function missingFn(err){
+  var m = ((err && (err.message || err.msg)) || "") + " " + ((err && err.code) || "");
+  return /could not find the function|does not exist|PGRST202|42883/i.test(m);
+}
+
+async function checkSchema(){
+  var gone = [];
+  await Promise.all(PATCHES.map(async function(p){
+    try{
+      var r = await SB.rpc(p.fn, {});
+      if(r.error && missingFn(r.error)) gone.push(p);
+    }catch(e){ if(missingFn(e)) gone.push(p); }
+  }));
+  /* patch 4 is a capability row, not a function */
+  try{
+    var c = await SB.from("vs_caps").select("cap").eq("role","manager").eq("cap","post_payroll");
+    if(!c.error && (!c.data || !c.data.length))
+      gone.push({file:"VS-PATCH-4.sql", fn:"", what:"the vendor manager posting payroll"});
+  }catch(e){}
+  gone.sort(function(a,b){ return a.file < b.file ? -1 : 1; });
+  S.missing = gone;
+  return gone;
+}
+
+function schemaBanner(){
+  var g = S.missing || [];
+  if(!g.length) return "";
+  var mine = S.profile && ["admin","manager","accounts"].indexOf(S.profile.role) >= 0;
+  if(!mine)
+    return '<div class="banner b-amber"><div class="ico">&#9888;</div><div>'+
+      '<b>Part of this portal is not switched on yet</b>'+
+      'Some things will refuse to work until WeVois finishes setting it up. If something you try is refused '+
+      'with a message that makes no sense, that is why - tell WeVois rather than working around it.</div></div>';
+  return '<div class="banner b-red"><div class="ico">&#9888;</div><div>'+
+    '<b>The database is behind this build &mdash; '+g.length+' patch'+(g.length===1?'':'es')+' still to run</b>'+
+    'The screens for these are already here, so they look available and then fail with a database error when '+
+    'somebody uses them. Open the Supabase SQL editor and run each file below, whole, in order:'+
+    '<ul style="margin:8px 0 0 18px;padding:0">'+
+    g.map(function(p){ return '<li style="margin:2px 0"><b>'+esc(p.file)+'</b> &mdash; '+esc(p.what)+'</li>'; }).join("")+
+    '</ul></div></div>';
+}
+
 /* ---------------------------------------------------------------- loading */
 async function loadAll(){
   var q = await Promise.all([
@@ -139,6 +197,10 @@ async function loadAll(){
       SB.from("vs_audit").select("*").order("at",{ascending:false}).limit(150)
     ]);
     S.profiles = p[0].data||[]; S.invites = p[1].data||[]; S.audit = p[2].data||[];
+    try{
+      var mq = await SB.from("vs_mail").select("*").order("created_at",{ascending:false}).limit(80);
+      S.mail = mq.data||[];
+    }catch(e){ S.mail = []; }
   } else if(can("view_all")){
     var a = await SB.from("vs_audit").select("*").order("at",{ascending:false}).limit(150);
     S.audit = a.data||[];
@@ -155,6 +217,11 @@ async function openStatement(id){
   try{
     var d = await rpc("vs_statement_json", {p_stmt:id}, "opening...");
     S.stmt = d; S.open = id; S.tab = "sheet"; S.draft = null;
+    /* approvals and the outbox are staff-only, and older databases have not
+       run the patch that provides them - neither should stop a statement
+       opening */
+    S.extra = {approvals:[], mail:[]};
+    try{ S.extra = await rpc("vs_statement_extra", {p_stmt:id}) || S.extra; }catch(e){}
     if(S.profile.role==="vendor"){
       try{ await SB.rpc("vs_mark_viewed",{p_stmt:id}); }catch(e){}
     }
@@ -165,7 +232,10 @@ async function openStatement(id){
 async function refresh(keepOpen){
   await loadAll();
   if(keepOpen && S.open){
-    try{ S.stmt = await rpc("vs_statement_json",{p_stmt:S.open}); S.draft = null; }
+    try{
+      S.stmt = await rpc("vs_statement_json",{p_stmt:S.open}); S.draft = null;
+      try{ S.extra = await rpc("vs_statement_extra",{p_stmt:S.open}) || S.extra; }catch(e2){}
+    }
     catch(e){ S.open = null; S.stmt = null; }
   }
   render();
