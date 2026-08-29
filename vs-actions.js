@@ -38,7 +38,7 @@ function viewAdmin(){
   var tabs = '<div class="tabs">'+[
     ["users","Users &amp; roles"],["vendors","Vendors"],["sites","Sites &amp; tenures"],
     ["settle","Settlements"],["heads","Booking heads"],["rules","Settlement rules"],
-    ["matrix","Who can do what"],["audit","Audit log"]
+    ["matrix","Who can do what"],["mail","Mail"],["audit","Audit log"]
   ].map(function(x){
     return '<button data-act="atab" data-v="'+x[0]+'" class="'+(t===x[0]?"on":"")+'">'+x[1]+'</button>'; }).join("")+'</div>';
 
@@ -50,6 +50,7 @@ function viewAdmin(){
     : t==="heads"   ? adminHeads()
     : t==="rules"   ? adminRules()
     : t==="matrix"  ? adminMatrix()
+    : t==="mail"    ? adminMail()
     :                 adminAudit();
 
   return '<div class="page-h"><div><h1>Administration</h1>'+
@@ -284,6 +285,57 @@ function adminMatrix(){
     '<table class="matrix"><thead>'+head+'</thead><tbody>'+body+'</tbody></table>';
 }
 
+function adminMail(){
+  var s = S.settings || {};
+  var ready = !!(s.mail_from||"").trim();
+  var rows = (S.mail||[]).map(function(m){
+    var chip = m.status==="sent"  ? '<span class="chip c-green"><span class="d"></span>sent</span>'
+             : m.status==="failed"? '<span class="chip c-red"><span class="d"></span>failed</span>'
+             : m.status==="skipped"?'<span class="chip c-grey"><span class="d"></span>not sent - notifications off</span>'
+             :                      '<span class="chip c-amber"><span class="d"></span>waiting</span>';
+    return '<tr><td><b>'+esc(m.to_name||m.to_email)+'</b>'+
+      '<div style="font-size:12px;color:var(--muted)">'+esc(m.to_email)+
+      (m.to_role?' &middot; '+esc(ROLE_LABEL[m.to_role]||m.to_role):'')+'</div></td>'+
+      '<td style="font-size:13px">'+esc(m.subject)+
+        (m.error?'<div style="font-size:12px;color:var(--red)">'+esc(m.error)+'</div>':'')+'</td>'+
+      '<td>'+chip+'</td>'+
+      '<td style="font-size:12px;color:var(--muted);white-space:nowrap">'+dt(m.sent_at||m.created_at)+'</td></tr>';
+  }).join("");
+
+  return '<div class="card-b">'+
+    (ready?'':'<div class="banner b-amber" style="margin-bottom:16px"><div class="ico">&#9888;</div><div>'+
+      '<b>No sending address yet</b>Messages are being written down but nothing is going out. '+
+      'Fill in the address below and follow <b>SETUP-MAIL.md</b> to deploy the sender. Nothing already queued is lost.'+
+      '</div></div>')+
+    '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#9993;</div><div>'+
+    '<b>Who is told, and when</b>'+
+    'Sharing a month, or issuing a revised version, emails that site&rsquo;s vendor and both observers. '+
+    'The vendor only ever hears about his own sites; the CEO and the VP hear about all of them. '+
+    'Asking for a confirmation emails the CEO and the VP. '+
+    'The portal writes every message down whether or not it can send it, so nothing is ever silently dropped.'+
+    '</div></div>'+
+    '<div class="grid2">'+
+      '<div class="fld"><label class="fl">From address</label>'+
+        '<input class="inp" id="m-from" value="'+esc(s.mail_from||"")+'" placeholder="himanshu.wevois104@gmail.com">'+
+        '<div class="hint">The same mailbox the sender signs in as. Sending as an address you do not own gets mail marked as spam.</div></div>'+
+      '<div class="fld"><label class="fl">From name</label>'+
+        '<input class="inp" id="m-name" value="'+esc(s.mail_from_nm||"WeVois Vendor Settlement")+'"></div>'+
+    '</div>'+
+    '<div class="fld"><label class="fl">Address of this portal</label>'+
+      '<input class="inp" id="m-url" value="'+esc(s.portal_url||"")+'" placeholder="https://...">'+
+      '<div class="hint">So the mail can link back here. Without it the mail still goes, just with no link.</div></div>'+
+    '<div class="fld"><label class="fl"><input type="checkbox" id="m-on"'+(s.mail_on===false?"":" checked")+
+      ' style="width:auto;margin-right:7px;vertical-align:middle"> Send notifications</label>'+
+      '<div class="hint">Off means messages are still written down and marked <b>not sent</b>, so you can see what would have gone.</div></div>'+
+    '<div class="btnrow" style="margin-bottom:4px">'+
+      '<button class="btn primary" data-act="mailsave">Save</button>'+
+      '<button class="btn" data-act="mailsend">Send the queue now</button>'+
+      '<span style="font-size:12.5px;color:var(--muted)">The sender normally runs by itself every few minutes.</span>'+
+    '</div></div>'+
+    '<table><thead><tr><th>To</th><th>Subject</th><th>State</th><th>When</th></tr></thead><tbody>'+
+    (rows||'<tr><td colspan="4" class="empty">Nothing has been queued yet.</td></tr>')+'</tbody></table>';
+}
+
 function adminAudit(){
   var rows = S.audit.map(function(a){
     return '<tr><td style="white-space:nowrap;font-size:12.5px;color:var(--muted)">'+dt(a.at)+'</td>'+
@@ -318,7 +370,11 @@ function headOptionsForStatement(sel){
   var a = (v.adjustments||[]).map(function(x){
     return '<option value="adjustment|'+esc(x.id)+'|'+esc(x.label)+'"'+
       (sel===x.id?" selected":"")+'>'+esc(x.label)+' (adjustment)</option>'; }).join("");
-  return '<optgroup label="Booking heads">'+o+'</optgroup>'+(a?'<optgroup label="Adjustments">'+a+'</optgroup>':'');
+  var g = '<option value="gross||Total Expenses Should Be Paid"'+(sel==="__gross"?" selected":"")+
+          '>Total Expenses Should Be Paid (what the partner earned)</option>';
+  return '<optgroup label="The earned amount">'+g+'</optgroup>'+
+         '<optgroup label="Booking heads">'+o+'</optgroup>'+
+         (a?'<optgroup label="Adjustments">'+a+'</optgroup>':'');
 }
 
 /* ====================================================================== */
@@ -364,21 +420,20 @@ document.addEventListener("click", async function(e){
   if(a==="adj-add"){
     var t0 = S.adjTypes[0]||{label:"Other Adjustment", effect:"deduct"};
     S.draft.adj.push({label:t0.label, effect:t0.effect, amount:0, reference:"", note:""});
-    render(); return;
+    markDirty(); render(); return;
   }
-  if(a==="adj-del"){ S.draft.adj.splice(Number(D("i")),1); render(); return; }
+  if(a==="adj-del"){ S.draft.adj.splice(Number(D("i")),1); markDirty(); render(); return; }
   if(a==="savedraft"){
-    var lines = {};
-    Object.keys(S.draft.lines).forEach(function(k){ lines[k] = S.draft.lines[k]; });
-    var r = await call("vs_save_draft", {
-      p_stmt:S.open, p_gross:S.draft.gross, p_gross_note:S.draft.note,
-      p_lines:lines, p_adj:S.draft.adj }, "Draft saved", "saving...");
-    if(r.ok) await refresh(true);
+    if(autosaveTimer) clearTimeout(autosaveTimer);
+    var r = await autosave();
+    if(r.ok){ toast("Draft saved"); await refresh(true); }
     return;
   }
 
   /* ---- statement flow ---- */
   if(a==="share"){
+    if(autosaveTimer) clearTimeout(autosaveTimer);
+    if(S.dirty) await autosave();
     var st = S.stmt;
     ask("Share with the vendor",
       '<div class="decl">Once you share, <b>version '+curVer(st).v+' freezes permanently</b>. Nobody can edit it afterwards - '+
@@ -424,7 +479,8 @@ document.addEventListener("click", async function(e){
   if(a==="raise"){
     var key = D("key")||"", kind = D("kind")||"head", label = D("label")||"";
     var vv = curVer(S.stmt), our = 0;
-    if(kind==="head") (vv.lines||[]).forEach(function(l){ if(l.head_key===key) our=Number(l.amount)||0; });
+    if(kind==="gross"){ our = Number(vv.gross)||0; key = "__gross"; }
+    else if(kind==="head") (vv.lines||[]).forEach(function(l){ if(l.head_key===key) our=Number(l.amount)||0; });
     else (vv.adjustments||[]).forEach(function(x){ if(x.id===key) our=Number(x.amount)||0; });
     modal("Raise a point",
       '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#9432;</div><div>'+
@@ -434,8 +490,10 @@ document.addEventListener("click", async function(e){
       '<div class="fld"><label class="fl">Your figure (optional)</label><input class="inp num" id="q-claim" placeholder="leave blank if you only want an explanation"></div>'+
       '<div class="fld"><label class="fl">What is the issue?</label><textarea class="inp" id="q-note" '+
         'placeholder="Be specific - dates, vehicle numbers, bill numbers."></textarea></div>'+
-      '<div class="fld"><label class="fl">Attach proof (file name or reference, optional)</label>'+
-        '<input class="inp" id="q-att" placeholder="e.g. workshop-bill-4417.pdf"></div>',
+      '<div class="fld"><label class="fl">Attach proof (optional)</label>'+
+        '<input type="file" id="q-file" class="inp">'+
+        '<div class="hint">The bill, the log sheet, a photo &mdash; up to 25 MB. It goes on this month&rsquo;s '+
+        'record where WeVois can open it, and stays there.</div></div>',
       '<button class="btn" data-act="closemodal">Cancel</button>'+
       '<button class="btn primary" data-act="raise-go">Submit point</button>');
     return;
@@ -443,9 +501,28 @@ document.addEventListener("click", async function(e){
   if(a==="raise-go"){
     var tv = (val("q-target")||"").split("|");
     var claim = val("q-claim").replace(/[^0-9.\-]/g,"");
+    if(!val("q-note").trim()){ toast("Describe the issue. That text is the record."); return; }
+    var qfile = document.getElementById("q-file"), qatt = "";
+    if(qfile && qfile.files && qfile.files[0]){
+      var qup = await uploadDoc(qfile.files[0], "bill", true);
+      if(qup.ok){
+        qatt = qfile.files[0].name;
+      } else {
+        /* the file could not go up. Losing the point as well would be the worse
+           of the two failures, so offer to send it with the file named instead
+           of attached, and say so plainly. */
+        if(!window.confirm(
+            "The file could not be attached.\n\n" +
+            "Send the point anyway, without it? The file name will be written into the point so " +
+            "WeVois knows what to ask you for.\n\n" +
+            "OK  - send the point now\n" +
+            "Cancel - keep this open and try the file again")) return;
+        qatt = qfile.files[0].name + " (could not be uploaded)";
+      }
+    }
     var r5 = await call("vs_raise_point", {
       p_stmt:S.open, p_kind:tv[0], p_key:tv[1]||"", p_label:tv[2]||"",
-      p_claimed: claim===""?null:Number(claim), p_note:val("q-note"), p_attach:val("q-att")
+      p_claimed: claim===""?null:Number(claim), p_note:val("q-note"), p_attach:qatt
     }, "Point recorded - WeVois notified", "saving...");
     if(r5.ok){ closeModal(); S.tab="points"; await refresh(true); }
     return;
@@ -579,6 +656,290 @@ document.addEventListener("click", async function(e){
       closeModal();
       toast(Number(rP.data)<=0.005 ? "Paid in full - month closed" : "Part payment recorded. Balance "+inr(rP.data));
       S.tab="payments"; await refresh(true);
+    }
+    return;
+  }
+
+  /* ---- site blocks ---- */
+  if(a==="opensite"){ S.site = D("sid"); window.scrollTo(0,0); render(); return; }
+  if(a==="backsites"){ S.site = null; window.scrollTo(0,0); render(); return; }
+
+  /* ---- general queries ---- */
+  if(a==="raiseq"){
+    modal("Raise a query",
+      '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#128172;</div><div>'+
+      'For anything that is not a figure on this month&rsquo;s sheet &mdash; vehicles, drivers, fuel cards, documents, '+
+      'next month. It is answered in writing and stays on this month&rsquo;s record. It does <b>not</b> hold up the '+
+      'settlement. If you disagree with an <b>amount</b>, go back to the Statement tab and raise a point on that line '+
+      'instead, so the figure can actually move.</div></div>'+
+      '<div class="fld"><label class="fl">What do you need?</label>'+
+        '<textarea class="inp" id="qq-note" placeholder="Be specific - dates, vehicle numbers, names."></textarea></div>'+
+      '<div class="fld"><label class="fl">Attach a file (optional)</label>'+
+        '<input type="file" id="qq-file" class="inp">'+
+        '<div class="hint">Up to 25 MB. It goes on this month&rsquo;s record where WeVois can open it.</div></div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="raiseq-go">Send the query</button>');
+    return;
+  }
+  if(a==="raiseq-go"){
+    var qnote = val("qq-note");
+    if(!qnote.trim()){ toast("Write the question down. That text is the record."); return; }
+    var qf = document.getElementById("qq-file");
+    var qname = "";
+    if(qf && qf.files && qf.files[0]){
+      var up = await uploadDoc(qf.files[0], "other", true);
+      if(up.ok) qname = qf.files[0].name;
+      else {
+        if(!window.confirm(
+            "The file could not be attached.\n\nSend the query anyway, without it?")) return;
+        qname = qf.files[0].name + " (could not be uploaded)";
+      }
+    }
+    var rQ = await call("vs_raise_query", {p_stmt:S.open, p_note:qnote, p_attach:qname},
+      "Query sent - WeVois will answer in writing");
+    if(rQ.ok){ closeModal(); S.tab="queries"; await refresh(true); }
+    return;
+  }
+  if(a==="answerq"){
+    var aid = D("id");
+    var apt = (S.stmt.points||[]).filter(function(p){ return p.id===aid; })[0] || {};
+    modal("Answer this query",
+      '<div class="banner b-grey" style="margin-bottom:14px"><div class="ico">&#10077;</div><div>'+
+      '<b>'+esc(apt.raised_by||"")+' asked</b>'+esc(apt.note||"")+'</div></div>'+
+      '<div class="fld"><label class="fl">Your answer &mdash; the vendor sees this word for word</label>'+
+        '<textarea class="inp" id="aq-text">'+esc(apt.decision||"")+'</textarea></div>'+
+      '<input type="hidden" id="aq-id" value="'+esc(aid)+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="answerq-go">Send the answer</button>');
+    return;
+  }
+  if(a==="answerq-go"){
+    var rAQ = await call("vs_answer_query", {p_point:val("aq-id"), p_reply:val("aq-text")}, "Answer sent");
+    if(rAQ.ok){ closeModal(); await refresh(true); }
+    return;
+  }
+  if(a==="remark"){
+    modal("Add a remark",
+      '<div class="banner b-grey" style="margin-bottom:14px"><div class="ico">&#9998;</div><div>'+
+      'A remark never moves an amount and never closes anything. It is the written trail of what was said '+
+      'around the decision, and both sides can see it.</div></div>'+
+      '<div class="fld"><label class="fl">Remark</label><textarea class="inp" id="rk-text"></textarea></div>'+
+      '<input type="hidden" id="rk-id" value="'+esc(D("id"))+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="remark-go">Add it</button>');
+    return;
+  }
+  if(a==="remark-go"){
+    var rRK = await call("vs_add_remark", {p_point:val("rk-id"), p_body:val("rk-text")}, "Remark added");
+    if(rRK.ok){ closeModal(); await refresh(true); }
+    return;
+  }
+
+  /* ---- asking the CEO / VP, and their answer ---- */
+  if(a==="askappr"){
+    modal("Ask the CEO or the VP",
+      '<div class="banner b-blue" style="margin-bottom:16px"><div class="ico">&#9878;</div><div>'+
+      'Both of them are emailed. Either can answer, and whoever does is named on the record with the date. '+
+      'Leave the amount blank to ask a plain question.</div></div>'+
+      '<div class="fld"><label class="fl">What are you asking?</label>'+
+        '<textarea class="inp" id="ap-q" placeholder="Be specific. This is the text they answer."></textarea></div>'+
+      '<div class="fld"><label class="fl">Is there an amount to confirm?</label>'+
+        '<select class="inp" id="ap-has" data-act="ap-has">'+
+          '<option value="0">No &mdash; it is a question</option>'+
+          '<option value="1">Yes &mdash; confirm a figure</option>'+
+        '</select></div>'+
+      '<div id="ap-money" style="display:none">'+
+        '<div class="grid2">'+
+          '<div class="fld"><label class="fl">Amount</label><input class="inp num" id="ap-amt" value="0"></div>'+
+          '<div class="fld"><label class="fl">Which way?</label><select class="inp" id="ap-eff">'+
+            '<option value="add">Added to the partner</option>'+
+            '<option value="deduct">Deducted from the partner</option></select></div>'+
+        '</div>'+
+        '<div class="fld"><label class="fl">Label &mdash; this becomes the line the vendor reads</label>'+
+          '<input class="inp" id="ap-label" placeholder="e.g. Extra tipper hire"></div>'+
+        '<div class="banner b-amber" style="margin:0"><div class="ico">&#9888;</div><div>'+
+        'If they confirm it, this line goes onto the statement by itself'+
+        (S.stmt && S.stmt.statement.status==="draft" ? ' straight away.' :
+         ' when you issue the next version.')+'</div></div>'+
+      '</div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="askappr-go">Send it to them</button>');
+    return;
+  }
+  if(a==="askappr-go"){
+    var hasAmt = val("ap-has") === "1";
+    if(!val("ap-q").trim()){ toast("Write down what you are asking."); return; }
+    var rAP = await call("vs_request_approval", {
+      p_stmt:S.open, p_question:val("ap-q"),
+      p_amount: hasAmt ? num("ap-amt") : null,
+      p_effect: hasAmt ? val("ap-eff") : null,
+      p_label:  hasAmt ? val("ap-label") : ""
+    }, "Sent - the CEO and the VP have been emailed");
+    if(rAP.ok){ closeModal(); S.tab="approvals"; await refresh(true); }
+    return;
+  }
+  if(a==="decide"){
+    var did = D("id"), ok = D("ok")==="1";
+    var dap = apprList().filter(function(x){ return x.id===did; })[0] || {};
+    modal(ok ? "Confirm this" : "Decline this",
+      '<div class="banner b-grey" style="margin-bottom:14px"><div class="ico">&#10077;</div><div>'+
+      '<b>'+esc(dap.asked_by||"")+' asked</b>'+esc(dap.question||"")+'</div></div>'+
+      (dap.amount != null
+        ? '<div class="banner '+(ok?"b-amber":"b-grey")+'" style="margin:0 0 14px"><div class="ico">&#8377;</div><div>'+
+          '<b>'+esc(dap.adj_label||"")+' &mdash; '+inr(dap.amount)+' '+
+          (dap.effect==="add"?"added to":"deducted from")+' the partner</b>'+
+          (ok ? 'Confirming writes this line onto the statement with your name and today&rsquo;s date as its reason.'
+              : 'Declining writes nothing. The refusal and your reason stay on the record.')+'</div></div>'
+        : '')+
+      '<div class="fld"><label class="fl">'+(ok?'Note (optional)':'Why are you declining? &mdash; required')+'</label>'+
+        '<textarea class="inp" id="dc-note"></textarea></div>'+
+      '<input type="hidden" id="dc-id" value="'+esc(did)+'">'+
+      '<input type="hidden" id="dc-ok" value="'+(ok?"1":"0")+'">',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn '+(ok?"go":"danger")+'" data-act="decide-go">'+(ok?"Confirm it":"Decline it")+'</button>');
+    return;
+  }
+  if(a==="decide-go"){
+    var dOk = val("dc-ok")==="1";
+    if(!dOk && !val("dc-note").trim()){ toast("Say why you are declining. That reason is the record."); return; }
+    var rD = await call("vs_decide_approval",
+      {p_id:val("dc-id"), p_ok:dOk, p_note:val("dc-note")}, null, "recording...");
+    if(rD.ok){ closeModal(); toast(String(rD.data)); await refresh(true); }
+    return;
+  }
+
+  /* ---- admin: mail ---- */
+  if(a==="mailsave"){
+    var rM = await call("vs_save_mail_settings", {
+      p_from:val("m-from"), p_name:val("m-name"), p_url:val("m-url"),
+      p_on: document.getElementById("m-on").checked }, "Mail settings saved");
+    if(rM.ok) await refresh(false);
+    return;
+  }
+  if(a==="mailsend"){
+    var url = (window.VS_URL||"").replace(".supabase.co", ".functions.supabase.co") + "/send-mail";
+    toast("Asking the sender to run...");
+    try{
+      var res = await fetch(url, {method:"POST", headers:{
+        "Authorization":"Bearer "+(window.VS_ANON||""), "Content-Type":"application/json"}});
+      var j = await res.json();
+      toast(j.ok ? ("Sent "+j.sent+(j.failed?", "+j.failed+" failed":"")) 
+                 : (j.reason || j.error || "The sender is not set up yet."));
+    }catch(e){
+      toast("Could not reach the sender. It may not be deployed yet - see SETUP-MAIL.md.");
+    }
+    await refresh(false);
+    return;
+  }
+
+  /* ---- reading the payroll out of a file ---- */
+  if(a==="readpayroll"){
+    var fi2 = document.getElementById("pr-file");
+    if(fi2){ fi2.value = ""; fi2.click(); }
+    return;
+  }
+  if(a==="useread"){
+    var P = S.read;
+    if(!P) return;
+    var mode = val("rd-split") || "dh";
+    var sh = mode==="split" ? num("rd-stf-heads") : (mode==="stf" ? P.paid_members : 0);
+    var frac = P.paid_members ? Math.min(Math.max(sh,0), P.paid_members) / P.paid_members : 0;
+    if(mode==="stf") frac = 1;
+    if(mode==="dh")  frac = 0;
+
+    var kept = false;
+    function put(id, v){ var el = document.getElementById(id); if(el){ el.value = v; } }
+    function split(dhId, stfId, total){
+      var stf = Math.round(total * frac * 100)/100;
+      put(stfId, stf); put(dhId, Math.round((total - stf)*100)/100);
+    }
+    var dhH = P.paid_members - sh;
+    if(P.kind === "salary"){
+      split("dh_pay","stf_pay", P.amount);
+      put("dh_heads", dhH); put("stf_heads", sh);
+      if(P.rejected.length && val("rd-np")==="1"){
+        put("not_processed_amount", Math.round((P.amount_all - P.amount)*100)/100);
+        var el = document.getElementById("not_processed_reason");
+        if(el) el.value = P.rejected.map(function(r){
+          return r.name + " " + inr(r.amount) + " did not go through the bank"; }).join("; ") + ".";
+      }
+    } else if(P.kind === "pf"){
+      split("dh_pf_ee","stf_pf_ee", P.employee);
+      split("dh_pf_er","stf_pf_er", P.employer);
+      /* the bank file is the better answer to "how many people were paid" -
+         PF and ESIC each cover a subset - so a headcount already set is left
+         alone rather than quietly replaced by a smaller one */
+      if(!num("dh_heads") && !num("stf_heads")){ put("dh_heads", dhH); put("stf_heads", sh); }
+      else kept = true;
+    } else if(P.kind === "esic"){
+      split("dh_esic_ee","stf_esic_ee", P.employee);
+      split("dh_esic_er","stf_esic_er", P.employer);
+    }
+    closeModal();
+    toast("Figures filled in from " + P.filename +
+      (kept ? " - the headcount already on the form was left as it is" : "") +
+      " - check them, then post");
+    S.read = null;
+    return;
+  }
+  if(a==="rd-split"){ /* handled on change */ return; }
+
+  /* ---- payroll processed late ---- */
+  if(a==="topup"){
+    modal("Salary processed late",
+      '<div class="banner b-teal" style="margin-bottom:16px"><div class="ico">&#8721;</div><div>'+
+      '<b>This goes on as its own entry, not over the top of the month</b>'+
+      'Enter only the people who were left off the first run. Their wages, PF and ESIC are added to what is already '+
+      'posted, and the entry keeps its own challan and date so the statement always agrees with the challans behind it.'+
+      (S.stmt.statement.status!=="draft"
+        ? ' This statement is already with the vendor, so the top-up waits for the next version, like any other correction.'
+        : '')+'</div></div>'+
+      '<h3 style="font-size:14px;margin:4px 0 10px">Driver / helper &mdash; the late batch only</h3>'+
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">Wages processed</label><input class="inp num" id="tu-dh_pay" value="0"></div>'+
+        '<div class="fld"><label class="fl">How many people</label><input class="inp num" id="tu-dh_heads" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employee part</label><input class="inp num" id="tu-dh_pf_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employer part</label><input class="inp num" id="tu-dh_pf_er" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employee part</label><input class="inp num" id="tu-dh_esic_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employer part</label><input class="inp num" id="tu-dh_esic_er" value="0"></div>'+
+      '</div>'+
+      '<h3 style="font-size:14px;margin:14px 0 10px">Staff &mdash; the late batch only</h3>'+
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">Salary processed</label><input class="inp num" id="tu-stf_pay" value="0"></div>'+
+        '<div class="fld"><label class="fl">How many people</label><input class="inp num" id="tu-stf_heads" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employee part</label><input class="inp num" id="tu-stf_pf_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">PF &mdash; employer part</label><input class="inp num" id="tu-stf_pf_er" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employee part</label><input class="inp num" id="tu-stf_esic_ee" value="0"></div>'+
+        '<div class="fld"><label class="fl">ESIC &mdash; employer part</label><input class="inp num" id="tu-stf_esic_er" value="0"></div>'+
+      '</div>'+
+      '<h3 style="font-size:14px;margin:14px 0 10px">This batch&rsquo;s own references</h3>'+
+      '<div class="grid2">'+
+        '<div class="fld"><label class="fl">PF challan / TRRN</label><input class="inp" id="tu-pf_trrn"></div>'+
+        '<div class="fld"><label class="fl">PF deposited on</label><input class="inp" id="tu-pf_paid_on" type="date"></div>'+
+        '<div class="fld"><label class="fl">ESIC challan no.</label><input class="inp" id="tu-esic_challan"></div>'+
+        '<div class="fld"><label class="fl">ESIC deposited on</label><input class="inp" id="tu-esic_paid_on" type="date"></div>'+
+        '<div class="fld"><label class="fl">Processed on</label><input class="inp" id="tu-processed_on" type="date"></div>'+
+      '</div>'+
+      '<div class="fld"><label class="fl">Why is it going on late? &mdash; the vendor sees this</label>'+
+        '<input class="inp" id="tu-note" placeholder="e.g. four helpers left off the first run, processed on the 22nd"></div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn teal" data-act="topup-go">Add this entry</button>');
+    return;
+  }
+  if(a==="topup-go"){
+    var tp = {};
+    ["dh_pay","dh_heads","dh_pf_ee","dh_pf_er","dh_esic_ee","dh_esic_er",
+     "stf_pay","stf_heads","stf_pf_ee","stf_pf_er","stf_esic_ee","stf_esic_er"]
+      .forEach(function(k){ tp[k] = num("tu-"+k); });
+    ["pf_trrn","pf_paid_on","esic_challan","esic_paid_on","processed_on","note"]
+      .forEach(function(k){ tp[k] = val("tu-"+k); });
+    var rTU = await call("vs_add_payroll_batch", {p_stmt:S.open, p:tp}, null, "adding the entry...");
+    if(rTU.ok){
+      closeModal();
+      toast(String(rTU.data)==="parked"
+        ? "Entry added - it lands when you issue the next version"
+        : "Entry added and applied to the statement");
+      await refresh(true);
     }
     return;
   }
@@ -1081,13 +1442,70 @@ document.addEventListener("input", function(e){
     if(k==="__gross") S.draft.gross = Number(String(el.value).replace(/[^0-9.\-]/g,"")||0);
     else if(k==="__note") S.draft.note = el.value;
     else S.draft.lines[k] = Number(String(el.value).replace(/[^0-9.\-]/g,"")||0);
+    markDirty();
   }
   if(a==="adjf" && S.draft){
     var i = Number(el.getAttribute("data-i")), f = el.getAttribute("data-f");
     if(!S.draft.adj[i]) return;
     S.draft.adj[i][f] = (f==="amount") ? Number(String(el.value).replace(/[^0-9.\-]/g,"")||0) : el.value;
+    markDirty();
   }
 });
+
+/* ------------------------------------------------------------- autosave */
+/* Typing a figure and forgetting to press Save is exactly the kind of gap
+   this whole system exists to close, so the draft saves itself. It waits for
+   a pause in typing rather than firing on every keystroke, never runs while
+   another save is in flight, and only ever touches a DRAFT - a version that
+   has gone to the vendor is frozen and no amount of typing can reach it. */
+var AUTOSAVE_MS = 900;
+var autosaveTimer = null;
+
+function autosaveNote(txt, cls){
+  var el = document.getElementById("autosave");
+  if(!el) return;
+  el.textContent = txt;
+  el.className = "autosave" + (cls ? " " + cls : "");
+}
+
+function markDirty(){
+  if(!S.draft || !S.open) return;
+  if(!S.stmt || S.stmt.statement.status !== "draft") return;
+  S.dirty = true;
+  autosaveNote("unsaved changes", "warn");
+  if(autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(function(){ autosave(); }, AUTOSAVE_MS);
+}
+
+async function autosave(silent){
+  if(!S.draft || !S.open || S.saving) return {ok:false};
+  if(!S.stmt || S.stmt.statement.status !== "draft") return {ok:false};
+  if(!S.dirty && silent) return {ok:true};
+  S.saving = true;
+  autosaveNote("saving...", "");
+  var lines = {};
+  Object.keys(S.draft.lines).forEach(function(k){ lines[k] = S.draft.lines[k]; });
+  var res;
+  try{
+    res = await rpc("vs_save_draft", {
+      p_stmt:S.open, p_gross:S.draft.gross, p_gross_note:S.draft.note,
+      p_lines:lines, p_adj:S.draft.adj }, "saving...");
+    S.dirty = false;
+    autosaveNote("saved " + new Date().toLocaleTimeString(), "ok");
+    res = {ok:true};
+  }catch(e){
+    autosaveNote("not saved - " + friendly(e), "bad");
+    res = {ok:false, error:e};
+  }
+  S.saving = false;
+  return res;
+}
+
+/* nothing should leave the screen with an unsaved figure on it */
+window.addEventListener("beforeunload", function(e){
+  if(S.dirty){ e.preventDefault(); e.returnValue = ""; }
+});
+
 /* ------------------------------------------------------ attaching a file */
 var DOC_MAX = 25 * 1024 * 1024;
 
@@ -1103,14 +1521,14 @@ function docStatus(t){
   if(el) el.textContent = t || "";
 }
 
-async function uploadDoc(file){
+async function uploadDoc(file, kindOverride, quiet){
   if(!file || !S.open) return {ok:false};
   if(file.size > DOC_MAX){
     toast("That file is "+Math.round(file.size/1048576)+" MB. The limit is 25 MB.");
     return {ok:false};
   }
   var kindEl = document.getElementById("doc-kind");
-  var kind = kindEl ? kindEl.value : "other";
+  var kind = kindOverride || (kindEl ? kindEl.value : "other");
   var name = safeName(file.name);
   /* the statement id is the first folder, which is what the storage policy
      reads to decide who may open the file */
@@ -1124,8 +1542,14 @@ async function uploadDoc(file){
   }catch(err){ up = {error:err}; }
   if(up && up.error){
     docStatus("");
-    toast("Upload failed. " + (up.error.message || ""));
-    return {ok:false};
+    var msg = String(up.error.message || "");
+    if(/row-level security|not authorized|violates/i.test(msg)){
+      msg = (S.profile && S.profile.role === "vendor")
+        ? "The portal is not set up to accept files from vendors yet. Tell WeVois: VS-PATCH-5.sql has not been run on the database."
+        : "The storage rules refused that file. If VS-PATCH-5.sql has not been run yet, run it - that is what lets a vendor attach.";
+    }
+    toast(msg);
+    return {ok:false, error:up.error, denied:true};
   }
 
   var r = await call("vs_add_document", {
@@ -1138,12 +1562,40 @@ async function uploadDoc(file){
     try{ await SB.storage.from("vs-docs").remove([path]); }catch(e){}
     return {ok:false};
   }
-  toast(file.name + " attached - the vendor can open it now");
-  await refresh(true);
+  if(!quiet){
+    toast(file.name + " attached - it is on this month's record now");
+    await refresh(true);
+  }
   return {ok:true, path:path};
 }
 
 document.addEventListener("change", async function(e){
+  if(e.target && e.target.id === "pr-file"){
+    var pf = e.target.files && e.target.files[0];
+    if(!pf) return;
+    toast("Reading " + pf.name + "...");
+    var parsed;
+    try{ parsed = await readPayrollFile(pf); }
+    catch(err){ toast(err.message || "Could not read that file."); return; }
+    S.read = parsed;
+    modal("What the file says",
+      readReview(parsed),
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="useread">Use these figures</button>');
+    /* the document itself belongs on the record beside the figures it produced */
+    try{ await uploadDoc(pf, parsed.kind === "salary" ? "payroll" : parsed.kind, true); }catch(e2){}
+    return;
+  }
+  if(e.target && e.target.id === "ap-has"){
+    var mb = document.getElementById("ap-money");
+    if(mb) mb.style.display = (e.target.value === "1") ? "" : "none";
+    return;
+  }
+  if(e.target && e.target.id === "rd-split"){
+    var box = document.getElementById("rd-split-box");
+    if(box) box.style.display = (e.target.value === "split") ? "" : "none";
+    return;
+  }
   if(e.target && e.target.id === "doc-file"){
     var f = e.target.files && e.target.files[0];
     if(f) await uploadDoc(f);
@@ -1181,6 +1633,8 @@ async function boot(){
 
   var cp = await SB.from("vs_caps").select("cap").eq("role", S.profile.role);
   S.caps = (cp.data||[]).map(function(x){ return x.cap; });
+
+  try{ await checkSchema(); }catch(e){ S.missing = []; }
 
   await loadAll();
   render();

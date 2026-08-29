@@ -87,7 +87,40 @@ reason, a correction after sharing still parks itself until you issue a new vers
 the record names whoever actually posted it. The CEO, the VP and the vendor are still
 refused.
 
-### 3f. Note for later
+### 3f. Run the fifth patch
+
+New query. Paste and run `VS-PATCH-5.sql`. It ends by printing six `t`s. It adds:
+
+- a point can be raised on the **earned amount** itself, not just on an expense head
+  or an adjustment line, and an accepted one moves that figure in the next version
+- a **Queries** tab for anything that is not a figure on the sheet, answered in
+  writing, with remarks from either side. Raising one does *not* hold up the money
+- the **vendor can attach his own files** to his own statement, and take back only
+  what he put up himself
+- **salary processed late** goes on as its own entry with its own challan and date,
+  added to the month rather than written over it
+
+### 3g. Run the sixth patch
+
+New query. Paste and run `VS-PATCH-6.sql`. It ends by printing six `t`s. It adds:
+
+- **email when a month goes out.** Sharing a statement, or issuing a revised version,
+  writes mail for that site's vendor and for the CEO and the VP. A vendor is only ever
+  told about his own sites; the observers are told about all of them.
+- **confirmation from the CEO or the VP.** You put a question, or a figure, to them
+  from a statement. If a request carries an amount and they confirm it, that line is
+  written onto the statement with their name and the date as its reason.
+
+Then read **SETUP-MAIL.md** and follow it, so the mail actually leaves. Until you do,
+every message is still written down and visible in **Administration > Mail** - nothing
+is lost, it just waits.
+
+On the second one, know what it changes: the CEO and the VP have been strict observers,
+every write refused. They now get exactly one thing they can do - answer a request that
+was put to them - and they are still refused everything else, including raising the
+request themselves. Somebody has to ask before they can answer.
+
+### 3h. Note for later
 
 `VS-IMPORT-HISTORY.sql` loads your whole spreadsheet history, but it cannot run yet.
 It writes through the same functions the app uses, and those refuse anybody who is not a
@@ -226,9 +259,18 @@ written reason, and both the attachment and the removal go into the permanent re
 
 **"Your role (...) is not allowed to do that"** — also working as intended. The database refused it, not the screen.
 
+**Something is refused with a database error that makes no sense** - most often
+*"new row violates row-level security policy"*. The app and the database are deployed
+separately, so a new build can be talking to a database that has not had the matching
+patch run. Run **`VS-CHECK-PATCHES.sql`** in the SQL editor; it lists every patch and
+whether it has actually been applied. The app now checks this itself at sign-in and
+puts a red banner at the top naming any file still to run.
+
 **"Your role (none) is not allowed to do this" while running SQL** — the SQL editor is not a signed-in user, so the write functions refuse it. `VS-IMPORT-HISTORY.sql` handles this itself by acting as your administrator, but it needs one to exist: create the first account in the app, then run the file. If you ever need to do this by hand for some other script, run `select set_config('request.jwt.claim.sub', '<your admin uuid>', false);` first, and set it back to `''` when you are done.
 
-**A change does not appear** — the app caches itself so it opens fast on a phone. After you redeploy, edit `sw.js` and bump `CACHE_VERSION` from `vs-v1` to `vs-v2`. Installed devices pick the new build up on the next open.
+**A change does not appear** — the app caches itself so it opens fast on a phone. After you redeploy, edit `sw.js` and bump `CACHE_VERSION`. Installed devices pick the new build up on the next open.
+
+**"Could not load the PDF reader"** — reading a PF, ESIC or bank file needs one library fetched from the internet the first time you use it in a session. Check the connection and try again. Everything else in the portal works offline against the cache.
 
 ---
 
@@ -236,9 +278,9 @@ written reason, and both the attachment and the removal go into the permanent re
 
 Not claims — assertions that run.
 
-**The database: 270 checks on real PostgreSQL 16, as the `authenticated` role, zero failures.** An uninvited signup reads nothing at all. A vendor sees only his own shared statements and none of his own drafts. Another vendor cannot read, query or approve a statement that is not his. The CEO and VP can read everything and every write is refused — including a direct SQL update on their own profile row to promote themselves. The manager cannot post payroll; Accounts cannot resolve a point; the CEO, the VP and the vendor himself are all refused when they try to move money. A statement cannot be shared until payroll is posted. A shared version cannot be edited by anyone, including the admin, including by direct SQL. A decision without a written reason is refused. Payment is refused without a UTR and refused if it would exceed the approved amount. The last administrator cannot be demoted or deactivated. A deleted settlement takes its versions, points and payments with it while the audit tombstone naming who, why and the UTRs survives and cannot itself be edited. An attached file can be read by the vendor it belongs to and by nobody else - not another vendor holding the exact path, not an uninvited account - and no role, including the administrator, can write a document row by direct SQL. A vendor reads only the sites he runs or has run, only his own vendor row, only his own contracts and booking heads, and only the months that have actually been sent to him; pointed straight at another vendor's statement and version with the real identifiers, every one of the nine reader functions gives him nothing, while the owner, Accounts, the CEO and the administrator all still get the right figure.
+**The database: 385 checks on real PostgreSQL 16, as the `authenticated` role, zero failures.** An uninvited signup reads nothing at all. A vendor sees only his own shared statements and none of his own drafts. Another vendor cannot read, query or approve a statement that is not his. The CEO and VP can read everything and every write is refused — including a direct SQL update on their own profile row to promote themselves. The manager cannot post payroll; Accounts cannot resolve a point; the CEO, the VP and the vendor himself are all refused when they try to move money. A statement cannot be shared until payroll is posted. A shared version cannot be edited by anyone, including the admin, including by direct SQL. A decision without a written reason is refused. Payment is refused without a UTR and refused if it would exceed the approved amount. The last administrator cannot be demoted or deactivated. A deleted settlement takes its versions, points and payments with it while the audit tombstone naming who, why and the UTRs survives and cannot itself be edited. An attached file can be read by the vendor it belongs to and by nobody else - not another vendor holding the exact path, not an uninvited account - and no role, including the administrator, can write a document row by direct SQL. A vendor reads only the sites he runs or has run, only his own vendor row, only his own contracts and booking heads, and only the months that have actually been sent to him; pointed straight at another vendor's statement and version with the real identifiers, every one of the nine reader functions gives him nothing, while the owner, Accounts, the CEO and the administrator all still get the right figure.
 
-**The app: 209 checks in a headless browser, zero JavaScript errors**, driving the whole journey — first-run bootstrap, building the org, the Nawa mid-month handover producing two April settlements with the right date ranges, the payroll gate, the gross-less-heads arithmetic, a recorded-only adjustment that does not move the figure, sharing and freezing, points on both a head and an adjustment, the phone-call confirm loop, resolve and revise with the diff, approval, part payments, the observer who can touch nothing, the loud delete with its surviving tombstone, a back-dated payment entered by the vendor manager, and the whole attachment cycle: the manager attaching a payroll sheet and an ESIC challan, a 26 MB file turned away, the vendor opening both and being refused when he tries to attach or remove one, another vendor refused the exact path, and a removal that will not go through without a reason. It also checks, as a second vendor with his own login, that his screen names one site, one vendor and one contract, that the other site's name appears nowhere on it, and that staff still read everything.
+**The app: 328 checks in a headless browser, zero JavaScript errors**, plus **38 checks on the payroll file readers run against your own July PF return, ESIC history and bank file**, driving the whole journey — first-run bootstrap, building the org, the Nawa mid-month handover producing two April settlements with the right date ranges, the payroll gate, the gross-less-heads arithmetic, a recorded-only adjustment that does not move the figure, sharing and freezing, points on both a head and an adjustment, the phone-call confirm loop, resolve and revise with the diff, approval, part payments, the observer who can touch nothing, the loud delete with its surviving tombstone, a back-dated payment entered by the vendor manager, and the whole attachment cycle: the manager attaching a payroll sheet and an ESIC challan, a 26 MB file turned away, the vendor opening both and being refused when he tries to attach or remove one, another vendor refused the exact path, and a removal that will not go through without a reason. It also checks, as a second vendor with his own login, that his screen names one site, one vendor and one contract, that the other site's name appears nowhere on it, and that staff still read everything.
 
 ---
 
