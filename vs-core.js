@@ -129,25 +129,60 @@ var PATCHES = [
   {file:"VS-PATCH-6.sql", fn:"vs_statement_extra",  what:"email notifications and CEO/VP confirmation"}
 ];
 
-function missingFn(err){
-  var m = ((err && (err.message || err.msg)) || "") + " " + ((err && err.code) || "");
-  return /could not find the function|does not exist|PGRST202|42883/i.test(m);
+/* Ask PostgREST what functions it actually publishes. This is one read-only
+   request that lists every RPC on the project, and it is the only honest way to
+   tell "this function is not there" from "this function is there and I called
+   it wrong".
+
+   The first version of this check called each function with no arguments and
+   treated the error as proof of absence. PostgREST answers a valid function
+   called without its arguments with the SAME code and nearly the same words as
+   one that does not exist - PGRST202, "could not find the function ... without
+   parameters" - so it reported patches as missing that had been run for weeks.
+   A warning that cries wolf is worse than no warning, so if the catalogue
+   cannot be read this says nothing at all rather than guessing. */
+async function publishedFunctions(){
+  var url = (window.VS_URL || "").replace(/\/+$/, "") + "/rest/v1/";
+  /* Ask as the signed-in person, not as the anonymous key. PostgREST's default
+     is to describe only what the asking role is allowed to run, and every one
+     of these functions is granted to authenticated and to nobody else - so the
+     anonymous key would be shown an almost empty list and the app would decide
+     the whole database was missing. Same false alarm, different cause. */
+  var tok = window.VS_ANON || "";
+  try{
+    var ss = await SB.auth.getSession();
+    if(ss && ss.data && ss.data.session && ss.data.session.access_token)
+      tok = ss.data.session.access_token;
+  }catch(e){}
+  var res = await fetch(url, {
+    headers: { apikey: window.VS_ANON || "", Authorization: "Bearer " + tok }
+  });
+  if(!res.ok) throw new Error("catalogue unavailable: " + res.status);
+  var spec = await res.json();
+  var have = {};
+  Object.keys((spec && spec.paths) || {}).forEach(function(p){
+    var m = /^\/rpc\/(.+)$/.exec(p);
+    if(m) have[m[1]] = true;
+  });
+  if(!Object.keys(have).length) throw new Error("catalogue listed no functions");
+  return have;
 }
 
 async function checkSchema(){
-  var gone = [];
-  await Promise.all(PATCHES.map(async function(p){
-    try{
-      var r = await SB.rpc(p.fn, {});
-      if(r.error && missingFn(r.error)) gone.push(p);
-    }catch(e){ if(missingFn(e)) gone.push(p); }
-  }));
+  S.missing = [];
+  var have;
+  try{ have = await publishedFunctions(); }
+  catch(e){ return S.missing; }          /* cannot ask - say nothing */
+
+  var gone = PATCHES.filter(function(p){ return !have[p.fn]; });
+
   /* patch 4 is a capability row, not a function */
   try{
     var c = await SB.from("vs_caps").select("cap").eq("role","manager").eq("cap","post_payroll");
     if(!c.error && (!c.data || !c.data.length))
       gone.push({file:"VS-PATCH-4.sql", fn:"", what:"the vendor manager posting payroll"});
   }catch(e){}
+
   gone.sort(function(a,b){ return a.file < b.file ? -1 : 1; });
   S.missing = gone;
   return gone;
@@ -168,7 +203,9 @@ function schemaBanner(){
     'somebody uses them. Open the Supabase SQL editor and run each file below, whole, in order:'+
     '<ul style="margin:8px 0 0 18px;padding:0">'+
     g.map(function(p){ return '<li style="margin:2px 0"><b>'+esc(p.file)+'</b> &mdash; '+esc(p.what)+'</li>'; }).join("")+
-    '</ul></div></div>';
+    '</ul><div style="margin-top:8px;font-size:12.5px;opacity:.85">This is read from the list of functions your '+
+    'project actually publishes. If you believe a file has already been run, run <b>VS-CHECK-PATCHES.sql</b> in '+
+    'the SQL editor &mdash; it answers the same question from inside the database.</div></div></div>';
 }
 
 /* ---------------------------------------------------------------- loading */
