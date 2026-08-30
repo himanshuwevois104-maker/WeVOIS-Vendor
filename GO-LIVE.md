@@ -120,7 +120,34 @@ every write refused. They now get exactly one thing they can do - answer a reque
 was put to them - and they are still refused everything else, including raising the
 request themselves. Somebody has to ask before they can answer.
 
-### 3h. Note for later
+### 3h. Run the seventh patch
+
+New query. Paste and run `VS-PATCH-7.sql`. It ends by printing one row saying every line
+already in the database still reduces the payment, which is what it was before. It adds:
+
+- **each booking head now says what it does to the amount.** Three choices, the same
+  three the adjustment lines under the Total have always had: *reduces payment* (money
+  WeVois spent for him, taken off - what every head did until now, and what every head
+  still does unless somebody changes it), *credits him* (added to what we pay instead of
+  taken off), and *recorded only* (on the statement with its figure, and not counted -
+  the payment-record case, so a line that has to be shown is not counted twice).
+- **the vendor manager chooses it on the draft**, in a box beside the amount. It saves
+  the moment he picks, and the figures below redraw from the database, not from the
+  browser.
+- **the administrator sets the site's standing choice** under **Sites & heads**, so a
+  head that is always a credit at one site is not re-chosen every month.
+- **payroll heads are not offered the choice.** Those figures come from the PF, ESIC and
+  bank files, and money that has left the company for his men is a deduction. An
+  exception to a payroll figure belongs in an adjustment line, where it already can go.
+- **cost per vehicle now follows the spend, not the net.** They are the same number only
+  while every head is a deduction. A credit back to the partner is not a cost of running
+  his site, and the memo exists to compare one site's running cost with another's.
+
+Nothing that has already gone to a vendor changes. Every line that exists is written as
+*reduces payment*, which is exactly what it was, so every historical Final amount stands
+to the rupee - the patch prints that count so you can see it for yourself.
+
+### 3i. Note for later
 
 `VS-IMPORT-HISTORY.sql` loads your whole spreadsheet history, but it cannot run yet.
 It writes through the same functions the app uses, and those refuse anybody who is not a

@@ -271,3 +271,13 @@ input[type=file].inp::file-selector-button:hover{background:var(--surface-2);bor
   .block{min-height:0}
   .rmk{max-width:100%}
 }
+
+/* a booking head now carries a choice as well as a figure: what it does to the
+   amount. The two sit together so the eye reads them as one statement. */
+.effcell{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.effcell .eff{max-width:158px;flex:0 0 158px}
+.effcell .num{max-width:150px}
+@media (max-width:820px){
+  .effcell{flex-wrap:wrap}
+  .effcell .eff{flex:1 1 100%;max-width:none}
+}

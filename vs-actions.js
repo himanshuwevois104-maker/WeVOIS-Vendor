@@ -217,23 +217,25 @@ function adminSettlements(){
 function adminHeads(){
   var out = S.sites.map(function(st){
     var hs = S.heads.filter(function(h){ return h.site_id===st.id; });
-    return '<tr class="grp-row"><td colspan="4">'+esc(st.name)+' &mdash; '+hs.length+' booking heads</td></tr>'+
+    return '<tr class="grp-row"><td colspan="5">'+esc(st.name)+' &mdash; '+hs.length+' booking heads</td></tr>'+
       hs.map(function(h){
         return '<tr><td style="padding-left:26px">'+esc(h.label)+(h.active?'':' <span class="chip c-grey">off</span>')+'</td>'+
           '<td>'+(h.src==="payroll"?'<span class="chip c-teal"><span class="d"></span>From the payroll posting</span>'
                                    :'<span class="chip c-grey">Entered by Vendor Manager</span>')+'</td>'+
           '<td style="font-size:12.5px;color:var(--muted)">'+esc(h.grp)+'</td>'+
+          '<td><span class="'+effClass(lineEff(h))+'">'+effWord(lineEff(h))+'</span></td>'+
           '<td class="num"><button class="btn sm" data-act="edithead" data-hid="'+h.id+'" data-label="'+esc(h.label)+'" '+
-            'data-sort="'+h.sort+'" data-on="'+(h.active?"1":"0")+'">Edit</button></td></tr>'; }).join("")+
-      '<tr><td colspan="4" style="padding-left:26px"><button class="btn sm" data-act="addhead" data-sid="'+st.id+'" '+
+            'data-sort="'+h.sort+'" data-on="'+(h.active?"1":"0")+'" data-eff="'+esc(lineEff(h))+'" '+
+            'data-src="'+esc(h.src)+'">Edit</button></td></tr>'; }).join("")+
+      '<tr><td colspan="5" style="padding-left:26px"><button class="btn sm" data-act="addhead" data-sid="'+st.id+'" '+
         'data-sname="'+esc(st.name)+'">+ Add a head to '+esc(st.name)+'</button></td></tr>';
   }).join("");
   return '<div class="card-b"><div class="banner b-blue" style="margin-bottom:0"><div class="ico">&#9432;</div><div>'+
     '<b>Every site has its own heads</b>That is how your workbook already works &mdash; Chirawa splits R&amp;M into "by the partner" and '+
     '"by WeVois", Bundi has loader and tractor fuel and tractor rent, Jhunjhunu has parking rent, Sujalpur has water and building rent. '+
     'Renaming a head here never changes a statement a vendor has already approved; versions freeze the label as well as the figure.</div></div></div>'+
-    '<table><thead><tr><th>Booking head</th><th>Source</th><th>Group</th><th></th></tr></thead>'+
-    '<tbody>'+(out||'<tr><td colspan="4" class="empty">No sites yet.</td></tr>')+'</tbody></table>'+
+    '<table><thead><tr><th>Booking head</th><th>Source</th><th>Group</th><th>Effect on the amount</th><th></th></tr></thead>'+
+    '<tbody>'+(out||'<tr><td colspan="5" class="empty">No sites yet.</td></tr>')+'</tbody></table>'+
     '<div class="card-b" style="border-top:1px solid var(--line-2)">'+
     '<h3 style="font-size:14px;margin-bottom:8px">Adjustment types</h3>'+
     '<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">'+
@@ -1382,6 +1384,12 @@ document.addEventListener("click", async function(e){
       '<div class="fld"><label class="fl">Who enters it?</label><select class="inp" id="h-src">'+
         '<option value="manual">Vendor Manager types it</option>'+
         '<option value="payroll">Derived from the payroll posting</option></select></div>'+
+      '<div class="fld"><label class="fl">What does it do to the amount?</label><select class="inp" id="h-eff">'+
+        '<option value="deduct">Reduces payment &mdash; money WeVois spent for him</option>'+
+        '<option value="add">Credits him &mdash; added to what we pay</option>'+
+        '<option value="note">Recorded only &mdash; on the statement, not counted</option></select>'+
+        '<div class="hint">The vendor manager can still choose differently for one month on the draft. '+
+        'A payroll head always reduces the payment.</div></div>'+
       '<div class="fld"><label class="fl">Sort order</label><input class="inp num" id="h-sort" value="900"></div>',
       '<button class="btn" data-act="closemodal">Cancel</button>'+
       '<button class="btn primary" data-act="addhead-go" data-sid="'+D("sid")+'">Add head</button>');
@@ -1389,7 +1397,8 @@ document.addEventListener("click", async function(e){
   }
   if(a==="addhead-go"){
     var rH = await call("vs_add_head", {p_site:D("sid"), p_key:val("h-key"), p_label:val("h-label"),
-      p_grp:val("h-grp"), p_src:val("h-src"), p_sort:num("h-sort")}, "Head added");
+      p_grp:val("h-grp"), p_src:val("h-src"), p_sort:num("h-sort"),
+      p_effect:val("h-eff")}, "Head added");
     if(rH.ok){ closeModal(); await refresh(false); }
     return;
   }
@@ -1400,14 +1409,28 @@ document.addEventListener("click", async function(e){
       '<div class="fld"><label class="fl">Active</label><select class="inp" id="eh-on">'+
         '<option value="1"'+(D("on")==="1"?" selected":"")+'>Yes</option>'+
         '<option value="0"'+(D("on")==="0"?" selected":"")+'>No - hide from new statements</option></select></div>'+
-      '<div class="hint">Statements already shared keep the label they were shared with.</div>',
+      (D("src")==="payroll"
+        ? '<div class="hint">This head is derived from the payroll posting. Money that has already left '+
+          'the company for his men always reduces the payment, so it cannot be set to anything else. '+
+          'An exception to a payroll figure belongs in an adjustment line.</div>'
+        : '<div class="fld"><label class="fl">What does it do to the amount?</label>'+
+          '<select class="inp" id="eh-eff">'+
+          EFFECTS.map(function(o){
+            return '<option value="'+o[0]+'"'+(D("eff")===o[0]?" selected":"")+'>'+
+              (o[0]==="deduct"?"Reduces payment &mdash; money WeVois spent for him"
+               :o[0]==="add"?"Credits him &mdash; added to what we pay"
+               :"Recorded only &mdash; on the statement, not counted")+'</option>'; }).join("")+
+          '</select><div class="hint">This is the standing choice for new months at this site. '+
+          'The vendor manager can still choose differently for one month while the draft is open.</div></div>')+
+      '<div class="hint">Statements already shared keep the label and the choice they were shared with.</div>',
       '<button class="btn" data-act="closemodal">Cancel</button>'+
       '<button class="btn primary" data-act="edithead-go" data-hid="'+D("hid")+'">Save</button>');
     return;
   }
   if(a==="edithead-go"){
     var rEH = await call("vs_set_head", {p_head:D("hid"), p_label:val("eh-label"),
-      p_sort:num("eh-sort"), p_active: val("eh-on")==="1"}, "Saved");
+      p_sort:num("eh-sort"), p_active: val("eh-on")==="1",
+      p_effect: document.getElementById("eh-eff") ? val("eh-eff") : null}, "Saved");
     if(rEH.ok){ closeModal(); await refresh(false); }
     return;
   }
@@ -1485,11 +1508,13 @@ async function autosave(silent){
   autosaveNote("saving...", "");
   var lines = {};
   Object.keys(S.draft.lines).forEach(function(k){ lines[k] = S.draft.lines[k]; });
+  var effects = {};
+  Object.keys(S.draft.effects||{}).forEach(function(k){ effects[k] = S.draft.effects[k]; });
   var res;
   try{
     res = await rpc("vs_save_draft", {
       p_stmt:S.open, p_gross:S.draft.gross, p_gross_note:S.draft.note,
-      p_lines:lines, p_adj:S.draft.adj }, "saving...");
+      p_lines:lines, p_adj:S.draft.adj, p_effects:effects }, "saving...");
     S.dirty = false;
     autosaveNote("saved " + new Date().toLocaleTimeString(), "ok");
     res = {ok:true};
@@ -1605,6 +1630,20 @@ document.addEventListener("change", async function(e){
   if(!el) return;
   var a = el.getAttribute("data-act");
   if(a==="period"){ S.period = el.value; S.open=null; S.stmt=null; render(); return; }
+  if(a==="draft-eff" && S.draft){
+    /* Unlike a figure being typed, this is one click with an immediate
+       consequence for the Total. So it is saved and read back straight away,
+       and every number on the screen is the database's own, not this
+       browser's arithmetic. */
+    var ek = el.getAttribute("data-k");
+    var prev = S.draft.effects[ek];
+    S.draft.effects[ek] = el.value;
+    S.dirty = true;
+    var rEf = await autosave();
+    if(!rEf.ok){ S.draft.effects[ek] = prev; render(); return; }
+    await refresh(true);
+    return;
+  }
   if(a==="adjf" && S.draft && el.getAttribute("data-f")==="label"){
     var i = Number(el.getAttribute("data-i"));
     var opt = el.options[el.selectedIndex];

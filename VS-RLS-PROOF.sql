@@ -1111,6 +1111,174 @@ select CK('...nor promote himself',
 select CK('the vendor cannot see what WeVois asked its own leadership',
   AS_('88888888-8888-8888-8888-888888888888'::uuid, $$ select count(*) from vs_approvals $$), '0');
 
+-- ====== 18. a head can credit him, or be recorded without counting =====
+-- Until now every booking head was a deduction: money WeVois had spent for the
+-- partner, taken off what we pay. The sheet does not always work that way. A
+-- head can be a credit, and some rows are there only because they happened -
+-- a payment already recorded - and must not be counted a second time.
+-- Built on its own site so nothing above depends on it.
+do $do$
+begin
+  perform set_config('request.jwt.claim.sub', U('admin')::text, false);
+  perform PUT('ev', vs_add_vendor('Effect Test Partner','OP-88','Y','y@et.in','90111'));
+  perform PUT('es', vs_add_site('Effect Test Site','Bundi'));
+  perform PUT('ec', vs_add_contract(ID('ev'), ID('es'), 10, '2026-06-01'));
+  perform PUT('est', vs_add_statement(ID('ec'), '2026-06-01'));
+  perform vs_invite('etp@op.in','Effect Test Owner','vendor', ID('ev'));
+end $do$;
+insert into auth.users (id, email) values
+  ('a8a8a8a8-a8a8-a8a8-a8a8-a8a8a8a8a8a8','etp@op.in') on conflict do nothing;
+
+-- ---- nothing that already exists moved
+select CK('every line in this whole database still reduces the payment',
+  (select (count(*) filter (where effect <> 'deduct'))::text from vs_version_lines), '0');
+select CK('a fresh month starts every head reducing the payment',
+  (select (count(*) filter (where l.effect='deduct') = count(*))::text
+     from vs_version_lines l join vs_versions v on v.id=l.version_id
+    where v.statement_id = ID('est')), 'true');
+
+-- ---- the manager fills three heads and chooses what each one does
+select CK('the manager types the earned amount and three running heads',
+  DO_(U('manager'), format($$ select vs_save_draft(%L::uuid, 400000::numeric, 'ten vehicles'::text,
+    '{"rm":50000,"misc":30000,"print":20000}'::jsonb, null::jsonb) $$, ID('est'))), 'OK');
+select CK('...all three reduce the payment to start with',
+  (select vs_version_heads(vs_current_version(ID('est')))::text), '100000.00');
+select CK('...so the Total is what he earned less what we spent',
+  (select vs_version_total(vs_current_version(ID('est')))::text), '300000.00');
+
+select CK('he marks one head as crediting the partner instead',
+  DO_(U('manager'), format($$ select vs_save_draft(%L::uuid, null::numeric, null::text,
+    null::jsonb, null::jsonb, '{"misc":"add"}'::jsonb) $$, ID('est'))), 'OK');
+select CK('...the net taken off drops by that head twice over',
+  (select vs_version_heads(vs_current_version(ID('est')))::text), '40000.00');
+select CK('...and the Total rises by the same 60,000',
+  (select vs_version_total(vs_current_version(ID('est')))::text), '360000.00');
+select CK('...the row is still on the statement with its own figure',
+  (select l.amount::text||'/'||l.effect from vs_version_lines l
+     join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est') and l.head_key = 'misc'), '30000.00/add');
+
+select CK('he marks another as recorded only',
+  DO_(U('manager'), format($$ select vs_save_draft(%L::uuid, null::numeric, null::text,
+    null::jsonb, null::jsonb, '{"print":"note"}'::jsonb) $$, ID('est'))), 'OK');
+select CK('...a recorded-only head does not move the figure at all',
+  (select vs_version_heads(vs_current_version(ID('est')))::text), '20000.00');
+select CK('...the Total moves by exactly the 20,000 no longer taken off',
+  (select vs_version_total(vs_current_version(ID('est')))::text), '380000.00');
+select CK('...but the row and its amount are still there to be read',
+  (select l.amount::text||'/'||l.effect from vs_version_lines l
+     join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est') and l.head_key = 'print'), '20000.00/note');
+
+-- ---- what WeVois actually spent is now a different number from the net
+select CK('company spend counts only what reduces the payment',
+  (select vs_version_spend(vs_current_version(ID('est')))::text), '50000.00');
+select CK('...and the net taken off is not the same figure',
+  (select (vs_version_spend(vs_current_version(ID('est')))
+        <> vs_version_heads(vs_current_version(ID('est'))))::text), 'true');
+
+-- ---- the refusals
+select CK('a made-up effect is refused', DO_(U('manager'), format(
+  $$ select vs_save_draft(%L::uuid, null::numeric, null::text, null::jsonb, null::jsonb,
+     '{"rm":"whatever"}'::jsonb) $$, ID('est'))), 'REFUSED');
+select CK('...and the head it names is untouched',
+  (select l.effect from vs_version_lines l join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est') and l.head_key = 'rm'), 'deduct');
+select CK('a vendor cannot choose what a head does', DO_('a8a8a8a8-a8a8-a8a8-a8a8-a8a8a8a8a8a8'::uuid,
+  format($$ select vs_save_draft(%L::uuid, null::numeric, null::text, null::jsonb, null::jsonb,
+     '{"rm":"add"}'::jsonb) $$, ID('est'))), 'REFUSED');
+select CK('the CEO cannot either', DO_(U('ceo'), format(
+  $$ select vs_save_draft(%L::uuid, null::numeric, null::text, null::jsonb, null::jsonb,
+     '{"rm":"add"}'::jsonb) $$, ID('est'))), 'REFUSED');
+select CK('a payroll head keeps reducing the payment whatever is asked of it',
+  DO_(U('manager'), format($$ select vs_save_draft(%L::uuid, null::numeric, null::text,
+     null::jsonb, null::jsonb, '{"wages":"add"}'::jsonb) $$, ID('est'))), 'OK');
+select CK('...it did not move',
+  (select l.effect from vs_version_lines l join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est') and l.head_key = 'wages'), 'deduct');
+
+-- ---- a shared version is frozen, effects included
+do $do$
+begin
+  perform set_config('request.jwt.claim.sub', U('manager')::text, false);
+  perform vs_post_payroll(ID('est'), '{"dh_pay":0,"dh_heads":0,"dh_pf_ee":0,"dh_pf_er":0,"dh_esic_ee":0,"dh_esic_er":0,
+    "stf_pay":0,"stf_heads":0,"stf_pf_ee":0,"stf_pf_er":0,"stf_esic_ee":0,"stf_esic_er":0,
+    "pf_trrn":"RJRAJ2606000000001","esic_challan":"ESIC/26/06/0000001","not_processed_amount":0,"not_processed_reason":""}'::jsonb);
+  perform vs_share(ID('est'));
+end $do$;
+select CK('once shared, the effect is frozen with the figures', DO_(U('manager'), format(
+  $$ select vs_save_draft(%L::uuid, null::numeric, null::text, null::jsonb, null::jsonb,
+     '{"rm":"note"}'::jsonb) $$, ID('est'))), 'REFUSED');
+select CK('...the vendor is still holding what he was sent',
+  (select l.effect from vs_version_lines l join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est') and l.head_key = 'misc' and v.v = 1), 'add');
+
+-- ---- a revision inherits the choice it corrects
+do $do$
+declare pid uuid;
+begin
+  perform set_config('request.jwt.claim.sub', 'a8a8a8a8-a8a8-a8a8-a8a8-a8a8a8a8a8a8'::uuid::text, false);
+  perform PUT('ept', vs_raise_point(ID('est'),'head','rm','R&M Exp.', 45000, 'R and M was 45,000, not 50,000', ''));
+  perform set_config('request.jwt.claim.sub', U('manager')::text, false);
+  select id into pid from vs_points where statement_id = ID('est') order by raised_at desc limit 1;
+  perform vs_resolve_point(pid, 'accepted', 45000, 'Bill checked, he is right');
+  perform vs_issue_revision(ID('est'));
+end $do$;
+select CK('the revision carries every effect forward untouched',
+  (select string_agg(l.head_key||':'||l.effect, ',' order by l.head_key)
+     from vs_version_lines l join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est') and v.v = 2 and l.head_key in ('misc','print','rm')),
+  'misc:add,print:note,rm:deduct');
+select CK('...and the corrected figure is on the credited head''s neighbour',
+  (select l.amount::text from vs_version_lines l join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est') and v.v = 2 and l.head_key = 'rm'), '45000.00');
+select CK('...v2 Total = 400000 - 45000 + 30000, print recorded only',
+  (select vs_version_total(vs_current_version(ID('est')))::text), '385000.00');
+
+-- ---- the site's standing choice, set once by the administrator
+select CK('the admin sets this site''s Misc head to credit the partner by default',
+  DO_(U('admin'), format($$ select vs_set_head(
+    (select id from vs_heads where site_id = %L and key = 'misc'), null::text, null::int, null::bool, 'add') $$,
+    ID('es'))), 'OK');
+select CK('...a payroll head cannot be set to anything else', DO_(U('admin'), format(
+  $$ select vs_set_head((select id from vs_heads where site_id = %L and key = 'wages'),
+     null::text, null::int, null::bool, 'add') $$, ID('es'))), 'REFUSED');
+select CK('...a nonsense value is refused too', DO_(U('admin'), format(
+  $$ select vs_set_head((select id from vs_heads where site_id = %L and key = 'misc'),
+     null::text, null::int, null::bool, 'sideways') $$, ID('es'))), 'REFUSED');
+select CK('...and the vendor manager cannot set the site default',
+  DO_(U('manager'), format($$ select vs_set_head(
+    (select id from vs_heads where site_id = %L and key = 'print'), null::text, null::int, null::bool, 'note') $$,
+    ID('es'))), 'REFUSED');
+do $do$
+begin
+  perform set_config('request.jwt.claim.sub', U('admin')::text, false);
+  perform PUT('est2', vs_add_statement(ID('ec'), '2026-07-01'));
+end $do$;
+select CK('next month opens with the standing choice already made',
+  (select l.effect from vs_version_lines l join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est2') and l.head_key = 'misc'), 'add');
+select CK('...and every other head still reduces the payment',
+  (select (count(*) filter (where l.effect <> 'deduct'))::text
+     from vs_version_lines l join vs_versions v on v.id = l.version_id
+    where v.statement_id = ID('est2')), '1');
+select CK('the audit log says what was changed and to what',
+  (select (count(*) > 0)::text from vs_audit
+    where title = 'Booking head changed' and body like '%credits him%'), 'true');
+
+-- ---- the app is handed both numbers and the per-line choice
+select CK('the payload carries the effect on every line',
+  AS_(U('manager'), format($$ select (jsonb_array_length(
+    (vs_statement_json(%L::uuid) -> 'versions' -> -1 -> 'lines')) =
+    (select count(*) from jsonb_array_elements(vs_statement_json(%L::uuid) -> 'versions' -> -1 -> 'lines') e
+      where e ? 'effect'))::text $$, ID('est'), ID('est'))), 'true');
+select CK('...and the spend, separate from the net taken off',
+  AS_(U('manager'), format($$ select ((vs_statement_json(%L::uuid) -> 'versions' -> -1 ->> 'spend_total')::numeric
+    <> (vs_statement_json(%L::uuid) -> 'versions' -> -1 ->> 'heads_total')::numeric)::text $$,
+    ID('est'), ID('est'))), 'true');
+select CK('a vendor from another site is still shown nothing here',
+  AS_(U('ramesh'), format($$ select vs_statement_json(%L) $$, ID('est'))), 'REFUSED');
+
 -- ============================ report ==================================
 \pset tuples_only off
 \pset format aligned

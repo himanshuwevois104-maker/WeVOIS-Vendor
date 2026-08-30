@@ -126,7 +126,8 @@ var PATCHES = [
   {file:"VS-PATCH-2.sql", fn:"vs_sees_site",        what:"keeping each vendor to his own sites"},
   {file:"VS-PATCH-3.sql", fn:"vs_set_site",         what:"editing a site and its tenures"},
   {file:"VS-PATCH-5.sql", fn:"vs_raise_query",      what:"queries, vendor uploads and payroll top-ups"},
-  {file:"VS-PATCH-6.sql", fn:"vs_statement_extra",  what:"email notifications and CEO/VP confirmation"}
+  {file:"VS-PATCH-6.sql", fn:"vs_statement_extra",  what:"email notifications and CEO/VP confirmation"},
+  {file:"VS-PATCH-7.sql", fn:"vs_version_spend",    what:"a head crediting him or being recorded without counting"}
 ];
 
 /* Ask PostgREST what functions it actually publishes. This is one read-only
@@ -304,6 +305,42 @@ function statusChip(s){
 }
 function effClass(e){ return e==="add"?"eff-add":e==="deduct"?"eff-deduct":"eff-note"; }
 function effSign(e){ return e==="add"?"+":e==="deduct"?"-":""; }
+
+/* What a line does to the money. Three choices, the same three the adjustment
+   lines have always had, and the same words on every screen so nobody has to
+   learn two vocabularies:
+     deduct  money WeVois spent for him, taken off what we pay  (the default,
+             and what every head did before this existed)
+     add     credited to him, not taken off
+     note    on the statement, and not counted - the payment-record case  */
+var EFFECTS = [["deduct","reduces payment"], ["add","credits him"], ["note","recorded only"]];
+function effWord(e){
+  for(var i=0;i<EFFECTS.length;i++) if(EFFECTS[i][0]===e) return EFFECTS[i][1];
+  return "reduces payment";
+}
+function effSelect(act, key, cur){
+  return '<select class="inp eff" data-act="'+act+'" data-k="'+esc(key)+'">'+
+    EFFECTS.map(function(o){
+      return '<option value="'+o[0]+'"'+(cur===o[0]?" selected":"")+'>'+o[1]+'</option>'; }).join("")+
+    '</select>';
+}
+/* a line written before VS-PATCH-7 has no effect on it and was, by definition,
+   a deduction - that is the only thing a head could be */
+function lineEff(l){ return (l && l.effect) || "deduct"; }
+
+/* The three numbers under the heads. They are the same figure only while every
+   head is a deduction, which is the ordinary month; as soon as one credits him
+   or is recorded only they part company, and showing one where another belongs
+   is how a settlement argument starts. */
+function headMix(v){
+  var spend = 0, credit = 0, noted = 0;
+  (v.lines||[]).forEach(function(l){
+    var a = Number(l.amount)||0, e = lineEff(l);
+    if(e==="add") credit += a; else if(e==="note") noted += a; else spend += a;
+  });
+  return {spend:spend, credit:credit, noted:noted, net:spend-credit,
+          plain: (credit===0 && noted===0)};
+}
 function siteName(id){ for(var i=0;i<S.sites.length;i++) if(S.sites[i].id===id) return S.sites[i].name; return "?"; }
 function vendorName(id){ for(var i=0;i<S.vendors.length;i++) if(S.vendors[i].id===id) return S.vendors[i].name; return "?"; }
 function contractsOfSite(sid){ return S.contracts.filter(function(c){ return c.site_id===sid; }); }

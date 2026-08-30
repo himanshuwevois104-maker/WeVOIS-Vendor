@@ -408,10 +408,13 @@ function tabSheet(){
   if(editable && !S.draft){
     var lines = {};
     v.lines.forEach(function(l){ lines[l.head_key] = Number(l.amount)||0; });
+    var effs = {};
+    v.lines.forEach(function(l){ effs[l.head_key] = l.effect || "deduct"; });
     S.draft = {
       gross: Number(v.gross)||0,
       note: v.gross_note||"",
       lines: lines,
+      effects: effs,
       adj: (v.adjustments||[]).filter(function(a){ return !a.payroll_linked; }).map(function(a){
         return {label:a.label, effect:a.effect, amount:Number(a.amount)||0,
                 reference:a.reference||"", note:a.note||""}; })
@@ -439,19 +442,34 @@ function tabSheet(){
   var groups = {};
   (v.lines||[]).forEach(function(l){ (groups[l.grp] = groups[l.grp] || []).push(l); });
   Object.keys(groups).forEach(function(g){
-    rows += '<tr class="grp-row"><td colspan="3">less &mdash; '+(GRP_LABEL[g]||esc(g))+'</td></tr>';
+    /* the heading still reads "less" while every head in the group is one -
+       which is the ordinary month - and drops the word as soon as one of them
+       credits him or is recorded only, because then it would be a lie */
+    var allLess = groups[g].every(function(l){ return lineEff(l) === "deduct"; });
+    rows += '<tr class="grp-row"><td colspan="3">'+(allLess?'less &mdash; ':'')+
+      (GRP_LABEL[g]||esc(g))+'</td></tr>';
     groups[g].forEach(function(l){
       var pt = (st.points||[]).filter(function(p){ return p.target_kind==="head" && p.target_key===l.head_key; })[0];
       var chip = pt ? ' <span class="chip '+(pt.status==="open"?"c-amber":pt.status==="awaiting_confirm"?"c-violet":
         (pt.status==="rejected"||pt.status==="disputed_record")?"c-red":pt.status==="carry_forward"?"c-blue":"c-green")+
         '"><span class="d"></span>'+esc(String(pt.status).replace(/_/g," "))+'</span>' : '';
       var ed = editable && l.src==="manual";
+      var ef = ed ? (D.effects[l.head_key]||"deduct") : lineEff(l);
       rows += '<tr><td style="padding-left:26px">'+esc(l.head_label)+
-        (l.src==="payroll"?' <span class="lockpill">payroll</span>':'')+chip+'</td>'+
+        (l.src==="payroll"?' <span class="lockpill">payroll</span>':'')+chip+
+        (!ed && ef==="note"
+          ? '<div style="font-size:12px;color:var(--faint)">recorded only &mdash; does not change the amount</div>'
+          : !ed && ef==="add"
+          ? '<div style="font-size:12px;color:var(--muted)">credited to him, not taken off</div>' : '')+'</td>'+
         '<td class="num">'+(ed
-          ? '<input class="inp num" style="max-width:150px;display:inline-block" value="'+(D.lines[l.head_key]||0)+
-            '" data-act="draft" data-k="'+esc(l.head_key)+'">'
-          : '<b>'+inr(l.amount)+'</b>')+'</td>'+
+          ? '<div class="effcell">'+effSelect("draft-eff", l.head_key, ef)+
+            '<input class="inp num" value="'+(D.lines[l.head_key]||0)+
+            '" data-act="draft" data-k="'+esc(l.head_key)+'"></div>'
+          /* colour marks the exception, not the rule: an ordinary deduction reads
+             exactly as it always did, and the eye goes straight to the line that
+             is doing something else */
+          : ef==="deduct" ? '<b>'+inr(l.amount)+'</b>'
+          : '<b class="'+effClass(ef)+'">'+effSign(ef)+inr(l.amount)+'</b>')+'</td>'+
         '<td class="num" style="width:112px">'+(canRaise
           ? '<button class="btn sm" data-act="raise" data-kind="head" data-key="'+esc(l.head_key)+'" data-label="'+esc(l.head_label)+'">Raise point</button>'
           : canLog
@@ -460,10 +478,20 @@ function tabSheet(){
     });
   });
 
-  rows += '<tr class="memo-row"><td>Expenses paid by company <span style="color:var(--faint)">(sum of the heads)</span></td>'+
-    '<td class="num">'+inr(v.heads_total)+'</td><td></td></tr>';
+  /* three different questions, three different numbers, and they only agree
+     while every head is a deduction. Spend is what WeVois paid out; the net is
+     what comes off the earned amount; the recorded-only rows are neither. */
+  var mix = headMix(v);
+  rows += '<tr class="memo-row"><td>'+
+    (mix.plain ? 'Expenses paid by company <span style="color:var(--faint)">(sum of the heads)</span>'
+               : 'Net taken off under the heads'+
+                 '<div style="font-size:12px;color:var(--muted)">company spend '+inr(mix.spend)+
+                 (mix.credit ? ' &middot; credited back to him '+inr(mix.credit) : '')+
+                 (mix.noted  ? ' &middot; recorded only '+inr(mix.noted) : '')+'</div>')+'</td>'+
+    '<td class="num">'+inr(mix.net)+'</td><td></td></tr>';
   rows += '<tr class="tot-row"><td><b>Total</b> <span style="font-weight:400;color:var(--muted)">'+
-    '&mdash; earned, less what we spent for him</span></td><td class="num">'+inr(v.total)+'</td><td></td></tr>';
+    '&mdash; earned, less what we spent for him</span></td><td class="num">'+
+    inr(v.total)+'</td><td></td></tr>';
 
   rows += '<tr class="grp-row"><td colspan="3">Adjustments</td></tr>';
   if(editable){
@@ -504,7 +532,7 @@ function tabSheet(){
   if(Number(st.contract.vehicles)>0 && S.profile.role !== "vendor")
     rows += '<tr class="memo-row"><td>Memo &mdash; company spend per vehicle ('+st.contract.vehicles+' vehicles)'+
       '<span class="lockpill" style="margin-left:6px">not shown to the vendor</span></td>'+
-      '<td class="num">'+inr(Number(v.heads_total)/Number(st.contract.vehicles))+'</td><td></td></tr>';
+      '<td class="num">'+inr(mix.spend/Number(st.contract.vehicles))+'</td><td></td></tr>';
 
   var acts = [];
   if(editable) acts.push('<span id="autosave" class="autosave">'+

@@ -3,7 +3,7 @@
    deploy out of date is worse than a page that takes an extra moment to load.
    Bump CACHE_VERSION on every deploy so installed phones pick the new build up. */
 
-var CACHE_VERSION = "vs-v11";
+var CACHE_VERSION = "vs-v12";
 var SHELL = ["./index.html","./styles.css","./vs-payroll-read.js","./vs-core.js","./vs-views.js","./vs-actions.js",
              "./supabase-config.js","./manifest.json"];
 

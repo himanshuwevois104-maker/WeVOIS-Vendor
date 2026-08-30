@@ -29,7 +29,9 @@ from (
     ('VS-PATCH-5.sql ', (select count(*) > 0 from pg_proc where proname='vs_raise_query'),
      'queries, VENDOR FILE UPLOADS, points on the earned amount, payroll top-ups'),
     ('VS-PATCH-6.sql ', (select count(*) > 0 from pg_proc where proname='vs_statement_extra'),
-     'email notifications and CEO/VP confirmation')
+     'email notifications and CEO/VP confirmation'),
+    ('VS-PATCH-7.sql ', (select count(*) > 0 from pg_proc where proname='vs_version_spend'),
+     'a head can credit him, or be recorded without being counted')
 ) as p(file, present, what);
 
 -- The storage rule that decides whether a VENDOR may attach a file.
@@ -42,5 +44,8 @@ select
        then 'the upload policy exists' else 'NO UPLOAD POLICY - run VS-PATCH-1.sql' end as policy_state,
   case when exists (select 1 from pg_policies
                      where schemaname='storage' and tablename='objects' and policyname='p_vsdocs_write'
-                       and qual || with_check like '%vendor%')
+                       -- coalesce, not ||: an INSERT policy has no USING clause, so qual is
+                       -- NULL, and NULL || anything is NULL - which made this say "vendors
+                       -- CANNOT attach" even on a database where the policy names them
+                       and coalesce(qual,'') || coalesce(with_check,'') like '%vendor%')
        then 'vendors CAN attach' else 'vendors CANNOT attach - run VS-PATCH-5.sql' end as vendor_uploads;
