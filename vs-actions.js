@@ -19,16 +19,29 @@ var CAP_ROWS = [
   ["Assign a vendor to a site", "manage_contracts"],
   ["Open or delete a settlement", "manage_settlements"],
   ["Manage booking heads and rules", "manage_masters"],
+  ["Confirm a figure put to the leadership", "approve_request"],
+  ["Connect and sync a site's working sheet", "sync_sheets"],
   ["View every vendor's statement", "view_all"]
 ];
 var ROLE_ORDER = ["admin","manager","accounts","ceo","vp","vendor"];
+/* The last resort only. This screen claims the database enforces the matrix,
+   so it must READ the database - a hand-kept copy drifts, and this one had:
+   it was still missing the manager posting payroll and the CEO confirming a
+   figure. S.allCaps is the real thing; this is what is shown if it could not
+   be read. */
 var CAPS_BY_ROLE = {
-  admin:["view_all","manage_users","manage_vendors","manage_contracts","manage_settlements","manage_masters"],
-  manager:["view_all","edit_draft","share","logcall","resolve","revise","remind","pay","post_payroll"],
+  admin:["view_all","manage_users","manage_vendors","manage_contracts","manage_settlements",
+         "manage_masters","sync_sheets"],
+  manager:["view_all","edit_draft","share","logcall","resolve","revise","remind","pay",
+           "post_payroll","sync_sheets"],
   accounts:["view_all","post_payroll","pay"],
-  ceo:["view_all"], vp:["view_all"],
+  ceo:["view_all","approve_request"], vp:["view_all","approve_request"],
   vendor:["raise","confirm","approve"]
 };
+function capsOf(role){
+  if(S.allCaps && S.allCaps[role]) return S.allCaps[role];
+  return CAPS_BY_ROLE[role] || [];
+}
 
 /* ====================================================================== */
 /*  ADMIN CONSOLE                                                         */
@@ -37,8 +50,8 @@ function viewAdmin(){
   var t = S.adminTab;
   var tabs = '<div class="tabs">'+[
     ["users","Users &amp; roles"],["vendors","Vendors"],["sites","Sites &amp; tenures"],
-    ["settle","Settlements"],["heads","Booking heads"],["rules","Settlement rules"],
-    ["matrix","Who can do what"],["mail","Mail"],["audit","Audit log"]
+    ["settle","Settlements"],["heads","Booking heads"],["sheets","Site sheets"],
+    ["rules","Settlement rules"],["matrix","Who can do what"],["mail","Mail"],["audit","Audit log"]
   ].map(function(x){
     return '<button data-act="atab" data-v="'+x[0]+'" class="'+(t===x[0]?"on":"")+'">'+x[1]+'</button>'; }).join("")+'</div>';
 
@@ -48,6 +61,7 @@ function viewAdmin(){
     : t==="sites"   ? adminSites()
     : t==="settle"  ? adminSettlements()
     : t==="heads"   ? adminHeads()
+    : t==="sheets"  ? adminSheets()
     : t==="rules"   ? adminRules()
     : t==="matrix"  ? adminMatrix()
     : t==="mail"    ? adminMail()
@@ -245,6 +259,57 @@ function adminHeads(){
     '<button class="btn sm" data-act="addadj">+ Add an adjustment type</button></div>';
 }
 
+/* ------------------------------------------------------- site working sheets
+   Connecting a site to the Google Sheet its office already keeps. The portal
+   never reaches into Google; a small script inside each sheet pushes to the
+   portal, and this is where you say which site that sheet belongs to. */
+var SHEET_TAB_LABEL = {monthly:"Month totals", penalty:"Penalties",
+                       counts:"Day counts", duty:"Duty log"};
+
+function sheetOfSite(sid){
+  for(var i=0;i<(S.sheets||[]).length;i++) if(S.sheets[i].site_id === sid) return S.sheets[i];
+  return null;
+}
+
+function adminSheets(){
+  var rows = S.sites.map(function(st){
+    var sh = sheetOfSite(st.id);
+    var tabs = sh ? (sh.tabs||[]) : [];
+    var chips = tabs.length
+      ? tabs.sort(function(a,b){ return a.tab_key < b.tab_key ? -1 : 1; }).map(function(t){
+          return '<span class="chip c-teal" style="margin-right:5px"><span class="d"></span>'+
+            esc(SHEET_TAB_LABEL[t.tab_key]||t.tab_key)+'</span>'; }).join("")
+      : (sh ? '<span style="color:var(--muted);font-size:12.5px">connected, nothing read yet</span>' : "");
+
+    return '<tr><td><b>'+esc(st.name)+'</b>'+
+        (st.city?'<div style="font-size:12px;color:var(--muted)">'+esc(st.city)+'</div>':'')+'</td>'+
+      '<td>'+(sh
+        ? (sh.url
+            ? '<a href="'+esc(sh.url)+'" target="_blank" rel="noopener">'+esc(sh.title||"the sheet")+'</a>'
+            : esc(sh.title||"(no name)"))
+        : '<span style="color:var(--faint)">not connected</span>')+'</td>'+
+      '<td>'+chips+'</td>'+
+      '<td style="font-size:12.5px;color:var(--muted)">'+
+        (sh && sh.last_sync_at ? dt(sh.last_sync_at)+'<div>'+esc(sh.last_sync_by||"")+'</div>'
+                               : (sh ? 'never read' : ''))+'</td>'+
+      '<td class="num"><button class="btn sm" data-act="setsheet" data-sid="'+esc(st.id)+'" '+
+        'data-sname="'+esc(st.name)+'" data-title="'+esc(sh?(sh.title||""):"")+'" '+
+        'data-url="'+esc(sh?(sh.url||""):"")+'">'+(sh?'Edit':'Connect a sheet')+'</button></td></tr>';
+  }).join("");
+
+  return '<div class="card-b"><div class="banner b-blue" style="margin-bottom:0"><div class="ico">&#9432;</div><div>'+
+    '<b>The sheet each site already works from</b>'+
+    'The month totals, every penalty with its proof, the day counts and the duty log &mdash; mirrored here so '+
+    'the vendor can see where his figure came from and put a question on any row or column of it. '+
+    'The portal never writes back to Google.'+
+    '<div style="margin-top:8px">Two steps. Connect the sheet to its site here, which records where it lives. '+
+    'Then paste the script from SHEETS-SYNC.md into that sheet, under Extensions &rarr; Apps Script, so it pushes '+
+    'its rows here every hour. A site fed by more than one file takes the same script in each &mdash; Kuchaman and '+
+    'Bundi each keep two payment sheets, and most sites keep penalties in a file of their own.</div></div></div></div>'+
+    '<table><thead><tr><th>Site</th><th>Sheet</th><th>What has been read</th><th>Last read</th><th></th></tr></thead>'+
+    '<tbody>'+(rows||'<tr><td colspan="5" class="empty">No sites yet.</td></tr>')+'</tbody></table>';
+}
+
 function adminRules(){
   return '<div class="card-b" style="max-width:620px">'+
     '<div class="fld"><label class="fl">Response window (working days)</label>'+
@@ -276,12 +341,14 @@ function adminMatrix(){
       /* attaching a file is not a capability of its own: whoever can fill the
          draft or post the payroll can attach the paperwork behind it */
       var has = row[1]==="attach_docs"
-        ? (CAPS_BY_ROLE[r].indexOf("edit_draft")>=0 || CAPS_BY_ROLE[r].indexOf("post_payroll")>=0)
-        : CAPS_BY_ROLE[r].indexOf(row[1])>=0;
+        ? (capsOf(r).indexOf("edit_draft")>=0 || capsOf(r).indexOf("post_payroll")>=0)
+        : capsOf(r).indexOf(row[1])>=0;
       return '<td style="text-align:center" class="'+(has?"yes":"no")+'">'+(has?"&#10003;":"&middot;")+'</td>';
     }).join("")+'</tr>'; }).join("");
   return '<div class="card-b"><div class="banner b-grey" style="margin-bottom:0"><div class="ico">&#128737;</div><div>'+
-    '<b>This is the design, and the database enforces it</b>Hiding a button is not security. Each of these is a row-level policy '+
+    '<b>This is the design, and the database enforces it</b>'+
+    (S.allCaps ? 'Every tick below is read from the database itself, not from a list kept alongside it. ' : '')+
+    'Hiding a button is not security. Each of these is a row-level policy '+
     'or a check inside the function that performs the write, so an account that should not be able to do something cannot do it '+
     'even by calling the API directly.</div></div></div>'+
     '<table class="matrix"><thead>'+head+'</thead><tbody>'+body+'</tbody></table>';
@@ -1510,6 +1577,27 @@ document.addEventListener("click", async function(e){
       p_sort:num("eh-sort"), p_active: val("eh-on")==="1",
       p_effect: document.getElementById("eh-eff") ? val("eh-eff") : null}, "Saved");
     if(rEH.ok){ closeModal(); await refresh(false); }
+    return;
+  }
+  if(a==="setsheet"){
+    modal("Working sheet &mdash; "+esc(D("sname")),
+      '<div class="fld"><label class="fl">What the sheet is called</label>'+
+        '<input class="inp" id="sh-title" value="'+esc(D("title"))+'" placeholder="e.g. Vidisha Daily Payment"></div>'+
+      '<div class="fld"><label class="fl">Its link</label>'+
+        '<input class="inp" id="sh-url" value="'+esc(D("url"))+'" '+
+        'placeholder="https://docs.google.com/spreadsheets/d/..."></div>'+
+      '<div class="hint">This only records where the sheet lives, so people can open it from here. '+
+      'The figures arrive separately, from the script inside the sheet &mdash; see <b>SHEETS-SYNC.md</b>. '+
+      'A site fed by several files needs the script in each of them, with the same site name; they add up '+
+      'rather than overwrite each other.</div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="setsheet-go" data-sid="'+esc(D("sid"))+'">Save</button>');
+    return;
+  }
+  if(a==="setsheet-go"){
+    var rSh = await call("vs_set_sheet", {p_site:D("sid"), p_title:val("sh-title"),
+      p_url:val("sh-url"), p_active:true}, "Sheet connected");
+    if(rSh.ok){ closeModal(); await refresh(false); }
     return;
   }
   if(a==="addadj"){

@@ -163,7 +163,10 @@ function sheetCard(siteId, siteName){
       '<div class="banner b-blue" style="margin:0"><div class="ico">&#9432;</div><div>'+
       '<b>No sheet is connected to '+esc(siteName)+' yet</b>'+
       (can("sync_sheets")
-        ? 'Connect it under Administration &rarr; Site sheets, then sync it. Until then there is nothing to show here.'
+        ? 'Two steps, and then this fills itself. <b>Administration &rarr; Site sheets</b> &rarr; '+
+          '<b>Connect a sheet</b> against '+esc(siteName)+', which records where it lives. Then paste the script '+
+          'from <b>SHEETS-SYNC.md</b> into that sheet (Extensions &rarr; Apps Script) so it pushes its rows here '+
+          'every hour. A site fed by more than one file takes the same script in each.'
         : 'WeVois has not connected this site\'s working sheet yet.')+'</div></div></div></div>';
 
   var cur = sheetTabById(S.sheetTab) || tabs[0];
