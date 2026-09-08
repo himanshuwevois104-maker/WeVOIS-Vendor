@@ -1,0 +1,9 @@
+# the packaged copy of what is already in this folder - built, not authored
+wevois-vendor-settlement/
+wevois-vendor-settlement.zip
+
+# local test harness and scratch
+test/
+*.png
+extract_history.py
+gen_import.py

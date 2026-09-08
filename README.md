@@ -11,44 +11,54 @@ the two cannot share a folder, because a static host serves one `index.html`.
 
 ## Before the site will work
 
-1. **Run the SQL, in this order**, each once, in the Supabase SQL Editor
-   (select the whole file, then Run):
+1. **Run the SQL.** Supabase → SQL Editor → New query → open `VS-DATABASE.sql`,
+   select the whole file, paste, **Run**. That is the whole step: one file,
+   everything in it, in the right order — schema, row-level policies, the ~75
+   functions every write goes through, vendor isolation, file attachments,
+   queries, payroll top-ups, email, CEO/VP confirmation, the head effect, and
+   the security lock-down.
 
-   | File | What it does |
-   |---|---|
-   | `VS-SETUP.sql` | the schema — tables, row-level policies, ~40 functions |
-   | `VS-PATCH-1.sql` | the vendor manager can record payments; payroll/PF/ESIC file attachments; the workbook importer |
-   | `VS-PATCH-2.sql` | closes a hole where a vendor could read other vendors' sites and figures |
-   | `VS-PATCH-3.sql` | the administrator can edit a site and a tenure after creating them |
-   | `VS-PATCH-4.sql` | the vendor manager can post the processed salary, PF and ESIC |
-   | `VS-PATCH-5.sql` | points on the earned amount, a queries thread, vendor uploads, payroll top-ups |
-   | `VS-PATCH-6.sql` | email when a month goes out; confirmation from the CEO or VP |
+   **It does not touch your data.** Every table is created only if it is
+   missing and every seed row only if it is not there. Statements already
+   shared with vendors, their replies, your points, payments and the audit log
+   stay exactly as they are. Run it again whenever you like — on a database
+   already up to date it changes nothing.
 
-   Each ends by printing a verification row. `VS-SETUP.sql` prints
-   `13 | 16 | 21 | 0 | 0 | 0 | t`; the patches print `t` or `1` across.
+   It ends by printing a health check. Every line should read **OK**, and the
+   last few count your own data back to you so you can see nothing moved.
 
-2. **Optional, and mutually exclusive with each other:**
-   - `VS-SEED-ALL.sql` + `VS-IMPORT-HISTORY.sql` load the ten sites, four
-     vendors and 84 months out of *Operation Partners Payment Details 9.xlsx*.
-     Read `WORKBOOK-IMPORT-NOTES.md` first — it lists seventeen cells in that
-     workbook that do not add up.
-   - `VS-RESET.sql` empties everything back to the first-run screen. Run this
-     instead if you are entering your own data.
-
-   `VS-IMPORT-HISTORY.sql` must run **after** an administrator exists, because
-   it borrows that person's identity — the SQL editor is not a signed-in user.
+2. **Optional.** `VS-IMPORT-HISTORY.sql` loads the sites, vendors and 84 months
+   out of *Operation Partners Payment Details 9.xlsx*. Read
+   `WORKBOOK-IMPORT-NOTES.md` first — it lists seventeen cells in that workbook
+   that do not add up. It must run **after** an administrator exists, because it
+   borrows that person's identity; the SQL editor is not a signed-in user.
 
 3. **Supabase → Authentication → Providers → Email:** Confirm email **OFF**,
    sign-ups **ON**. That is safe: an account with no invitation gets no profile
    row, and with no profile every policy fails closed.
 
-4. `supabase-config.js` already carries the project URL and the **anon public**
-   key. The anon key belongs in a browser — that is its purpose. The
-   `service_role` key must never go in this file; it bypasses every policy.
+## About the key in this repository
 
-`GO-LIVE.md` is the full walkthrough, including deployment and troubleshooting.
-`SETUP-MAIL.md` covers sending the notification mail from your own address.
-`VS-CHECK-PATCHES.sql` tells you which patches this database has actually had.
+`supabase-config.js` carries the project URL and the **anon public** key, and
+this repository is public, so anybody can read both. That is by design — the
+anon key is what a browser uses, and it is meant to be seen.
+
+It is only safe because of the last part of `VS-DATABASE.sql`. PostgreSQL
+grants EXECUTE on a new function to PUBLIC automatically, which for a while
+meant every `vs_` function was reachable by anyone holding that key. Most
+refused anyway, because they start by checking the caller's role — but
+`vs_queue_mail`, an internal helper with no check of its own, did not. Anyone
+could have posted to `/rest/v1/rpc/vs_queue_mail` and had the mail sender
+deliver their subject and their HTML **from the office Gmail account**.
+
+`VS-DATABASE.sql` takes that free EXECUTE away, gives `anon` back only
+`vs_needs_setup`, leaves the internal helpers granted to nobody, and puts a real
+check inside each of them as well. Afterwards exactly **one** function is
+reachable without signing in, and the health check says so.
+
+So: **run the file before this repository is of any use to anybody but you**,
+and never put the `service_role` key in `supabase-config.js` — that one bypasses
+every policy and no patch can save you from it.
 
 ## What the host serves
 

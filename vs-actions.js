@@ -666,6 +666,84 @@ document.addEventListener("click", async function(e){
   if(a==="opensite"){ S.site = D("sid"); window.scrollTo(0,0); render(); return; }
   if(a==="backsites"){ S.site = null; window.scrollTo(0,0); render(); return; }
 
+  /* ---- the site's working sheet ---- */
+  if(a==="opensheet"){
+    try{ await loadSheet(D("sid")); }catch(e){ toast(friendly(e)); }
+    render(); return;
+  }
+  if(a==="sheettab"){
+    try{ await loadSheetTab(D("tid"), null); }catch(e){ toast(friendly(e)); }
+    render(); return;
+  }
+  if(a==="askrow" || a==="askcol"){
+    var page = S.sheetPage;
+    if(!page) return;
+    var cols = (page.tab && page.tab.cols) || [];
+    var isRow = (a==="askrow");
+    var row = isRow ? (page.rows||[]).filter(function(r){ return r.id===D("rid"); })[0] : null;
+    if(isRow && !row) return;
+    var what = isRow
+      ? (row.on_date ? dt(row.on_date).split(",")[0] : row.row_key)
+      : D("cl");
+    modal("Raise a query &mdash; "+esc(what),
+      (isRow
+        ? '<div class="pt-body" style="margin-bottom:14px">'+
+          cols.slice(0,6).map(function(c){
+            return '<div><span style="color:var(--muted)">'+esc(c.label)+'</span> &mdash; <b>'+
+              sheetCell(c, row.data[c.key])+'</b></div>'; }).join("")+'</div>'+
+          '<div class="fld"><label class="fl">Which figure on this row?</label>'+
+          '<select class="inp" id="q-col"><option value="">The whole row</option>'+
+          cols.map(function(c){ return '<option value="'+esc(c.key)+'">'+esc(c.label)+'</option>'; }).join("")+
+          '</select></div>'
+        : '<div class="hint" style="margin-bottom:14px">This asks about the <b>'+esc(D("cl"))+
+          '</b> column as a whole, not one row of it.</div>'+
+          '<input type="hidden" id="q-col" value="'+esc(D("ck"))+'">')+
+      '<div class="fld"><label class="fl">What do you say it should be? (optional)</label>'+
+        '<input class="inp num" id="q-claim" placeholder="leave blank if it is not about a figure"></div>'+
+      '<div class="fld"><label class="fl">Your question &mdash; WeVois sees this word for word</label>'+
+        '<textarea class="inp" id="q-note" placeholder="What you checked, and what does not agree."></textarea></div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="asksheet-go" data-rid="'+(isRow?esc(row.id):"")+'">Send it</button>');
+    return;
+  }
+  if(a==="asksheet-go"){
+    var cl = val("q-claim").replace(/[^0-9.\-]/g,"");
+    var rq = await call("vs_raise_sheet_point", {
+      p_tab:S.sheetTab, p_row:D("rid")||null,
+      p_col:(document.getElementById("q-col")||{}).value||"",
+      p_note:val("q-note"), p_claimed: cl===""?null:Number(cl)
+    }, "Query raised - WeVois will answer it in writing", "sending...");
+    if(rq.ok){ closeModal(); await loadSheetTab(S.sheetTab); render(); }
+    return;
+  }
+  if(a==="answersheet"){
+    modal("Answer &mdash; "+esc(D("label")),
+      '<div class="pt-body" style="margin-bottom:14px">&ldquo;'+esc(D("note"))+'&rdquo;</div>'+
+      '<div class="fld"><label class="fl">Your answer &mdash; he reads this word for word</label>'+
+        '<textarea class="inp" id="aq-text" placeholder="What you checked, against what, and the conclusion."></textarea></div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="answersheet-go" data-pid="'+D("pid")+'">Send the answer</button>');
+    return;
+  }
+  if(a==="answersheet-go"){
+    var ra = await call("vs_answer_sheet_point", {p_point:D("pid"), p_reply:val("aq-text")}, "Answer sent");
+    if(ra.ok){ closeModal(); await loadSheetTab(S.sheetTab); render(); }
+    return;
+  }
+  if(a==="sheetremark"){
+    modal("Add a remark",
+      '<div class="fld"><label class="fl">Remark</label>'+
+        '<textarea class="inp" id="rm-text" placeholder="It goes on the thread for both sides to read."></textarea></div>',
+      '<button class="btn" data-act="closemodal">Cancel</button>'+
+      '<button class="btn primary" data-act="sheetremark-go" data-pid="'+D("pid")+'">Add it</button>');
+    return;
+  }
+  if(a==="sheetremark-go"){
+    var rr = await call("vs_add_sheet_remark", {p_point:D("pid"), p_body:val("rm-text")}, "Remark added");
+    if(rr.ok){ closeModal(); await loadSheetTab(S.sheetTab); render(); }
+    return;
+  }
+
   /* ---- general queries ---- */
   if(a==="raiseq"){
     modal("Raise a query",
@@ -1630,6 +1708,10 @@ document.addEventListener("change", async function(e){
   if(!el) return;
   var a = el.getAttribute("data-act");
   if(a==="period"){ S.period = el.value; S.open=null; S.stmt=null; render(); return; }
+  if(a==="sheetmonth"){
+    try{ await loadSheetTab(S.sheetTab, el.value || null); }catch(e2){ toast(friendly(e2)); }
+    render(); return;
+  }
   if(a==="draft-eff" && S.draft){
     /* Unlike a figure being typed, this is one click with an immediate
        consequence for the Total. So it is saved and read back straight away,

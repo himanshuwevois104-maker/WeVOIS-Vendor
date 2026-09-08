@@ -137,7 +137,120 @@ function viewSite(){
     '</div>'+
     '<div class="card"><div class="card-h"><h2>Month by month</h2><div class="spacer"></div>'+
       '<span class="sub">newest first &mdash; click a row to open</span></div>'+
-      '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(months)+'</tbody></table></div></div>';
+      '<div class="card-b tight"><table class="hoverable">'+listHead()+'<tbody>'+listRows(months)+'</tbody></table></div></div>'+
+    sheetCard(S.site, name);
+}
+
+/* ------------------------------------------------- the site's working sheet */
+var SHEET_NOTE = {
+  monthly: "What the office totalled for each month. The Net Payable here is where the settlement figure comes from.",
+  penalty: "Every penalty, with the date, the type and the proof it was written against.",
+  counts:  "The day-by-day counts the month was built from.",
+  duty:    "The duty log: who ran which vehicle in which zone, for how long, and what it earned."
+};
+
+function sheetCard(siteId, siteName){
+  if(!S.sheet)
+    return '<div class="card"><div class="card-h"><h2>Working sheet</h2><div class="spacer"></div></div>'+
+      '<div class="card-b"><p style="color:var(--muted);font-size:13.5px;margin:0 0 12px">'+
+      'The daily record this month\'s figure is built from &mdash; the duty log, the day counts and every penalty '+
+      'with its proof. Open it to see the working, and to put a question on any row or column.</p>'+
+      '<button class="btn primary" data-act="opensheet" data-sid="'+esc(siteId)+'">Open the working sheet</button></div></div>';
+
+  var tabs = S.sheet.tabs || [];
+  if(!tabs.length)
+    return '<div class="card"><div class="card-h"><h2>Working sheet</h2></div><div class="card-b">'+
+      '<div class="banner b-blue" style="margin:0"><div class="ico">&#9432;</div><div>'+
+      '<b>No sheet is connected to '+esc(siteName)+' yet</b>'+
+      (can("sync_sheets")
+        ? 'Connect it under Administration &rarr; Site sheets, then sync it. Until then there is nothing to show here.'
+        : 'WeVois has not connected this site\'s working sheet yet.')+'</div></div></div></div>';
+
+  var cur = sheetTabById(S.sheetTab) || tabs[0];
+  var months = sheetMonths(cur);
+  var head = '<div class="card-h"><h2>Working sheet</h2><div class="spacer"></div>'+
+    (S.sheet.sheet && S.sheet.sheet.last_sync_at
+      ? '<span class="sub">last read '+dt(S.sheet.sheet.last_sync_at)+'</span>' : '')+'</div>';
+
+  var tabbar = '<div class="tabs" style="padding:0 14px">'+tabs.map(function(t){
+      return '<button data-act="sheettab" data-tid="'+esc(t.id)+'"'+
+        (t.id===cur.id?' class="on"':'')+'>'+esc(t.label)+
+        (Number(t.open_points)>0?'<span class="cnt">'+t.open_points+'</span>':'')+'</button>';
+    }).join("")+'</div>';
+
+  var picker = months.length > 1
+    ? '<div class="card-b" style="padding-bottom:0"><label class="fl">Month</label>'+
+      '<select class="inp" style="max-width:220px" data-act="sheetmonth">'+
+      '<option value="">Every month</option>'+
+      months.map(function(m){
+        return '<option value="'+m+'"'+(S.sheetPeriod===m?' selected':'')+'>'+esc(monthLabel(m+"-01"))+'</option>';
+      }).join("")+'</select></div>' : "";
+
+  return '<div class="card">'+head+tabbar+picker+
+    '<div class="card-b"><p style="color:var(--muted);font-size:13px;margin:0 0 10px">'+
+      esc(SHEET_NOTE[cur.tab_key]||"")+'</p>'+
+      sheetPoints()+ sheetTable(cur) +'</div></div>';
+}
+
+function sheetTable(tab){
+  var page = S.sheetPage;
+  if(!page || !page.rows) return '<div class="empty">Nothing read yet.</div>';
+  var cols = (page.tab && page.tab.cols) || [];
+  if(!cols.length) return '<div class="empty">This tab has no columns yet.</div>';
+  if(!page.rows.length) return '<div class="empty">No rows for this month.</div>';
+
+  var mayAsk = can("raise");
+  var head = '<tr>'+ (mayAsk?'<th style="width:34px"></th>':'') +
+    cols.map(function(c){
+      return '<th'+(c.kind==="money"?' class="num"':'')+'>'+esc(c.label)+
+        (mayAsk ? ' <button class="colq" data-act="askcol" data-ck="'+esc(c.key)+'" '+
+                  'data-cl="'+esc(c.label)+'" title="Ask about this whole column">?</button>' : '')+
+        '</th>'; }).join("") + '</tr>';
+
+  var openOn = {};
+  (page.points||[]).forEach(function(p){ if(p.row_id && p.status==="open") openOn[p.row_id] = 1; });
+
+  var body = page.rows.map(function(r){
+    return '<tr'+(r.gone?' class="rowgone"':'')+(openOn[r.id]?' class="rowq"':'')+'>'+
+      (mayAsk ? '<td><button class="rowq-b" data-act="askrow" data-rid="'+esc(r.id)+'" '+
+                'title="Ask about this row">?</button></td>' : '')+
+      cols.map(function(c){
+        return '<td'+(c.kind==="money"?' class="num"':'')+'>'+sheetCell(c, r.data[c.key])+'</td>';
+      }).join("")+'</tr>'+
+      (r.gone ? '<tr class="rowgone-n"><td colspan="'+(cols.length+(mayAsk?1:0))+'">'+
+        'This row is no longer in the sheet &mdash; it was there until '+dt(r.gone_at)+
+        ', and is kept because a question may be hanging off it.</td></tr>' : '');
+  }).join("");
+
+  return '<div class="sheetwrap"><table class="sheet">'+head+'<tbody>'+body+'</tbody></table></div>';
+}
+
+function sheetPoints(){
+  var pts = (S.sheetPage && S.sheetPage.points) || [];
+  if(!pts.length) return "";
+  var mayAnswer = can("resolve");
+  var mayRemark = ["vendor","manager","accounts","admin"].indexOf(S.profile.role) >= 0;
+  return '<div style="margin-bottom:14px">'+pts.map(function(p){
+    return '<div class="pt '+(p.status==="open"?"open":"done")+'">'+
+      '<div class="pt-h">'+
+        (p.status==="open"
+          ? '<span class="chip c-amber"><span class="d"></span>Open</span>'
+          : '<span class="chip c-green"><span class="d"></span>Answered</span>')+
+        '<span class="pt-head">'+esc(p.target_label)+'</span><div style="flex:1"></div>'+
+        '<span class="when">'+dt(p.raised_at)+'</span></div>'+
+      '<div class="pt-h" style="margin-bottom:4px"><span class="who">'+esc(p.raised_by)+'</span></div>'+
+      '<div class="pt-body">&ldquo;'+esc(p.note)+'&rdquo;</div>'+
+      (p.claimed!=null?'<div class="pt-figs"><div>He says<b>'+inr(p.claimed)+'</b></div></div>':'')+
+      (p.answer?'<div class="pt-dec"><b>WeVois response:</b> '+esc(p.answer)+
+        '<div class="m">'+esc(p.answered_by||"")+' &middot; '+dt(p.answered_at)+'</div></div>':'')+
+      remarkList(p)+
+      '<div class="btnrow" style="margin-top:10px">'+
+        (mayAnswer && p.status==="open"
+          ? '<button class="btn primary sm" data-act="answersheet" data-pid="'+esc(p.id)+'" '+
+            'data-label="'+esc(p.target_label)+'" data-note="'+esc(p.note)+'">Answer it</button>' : '')+
+        (mayRemark ? '<button class="btn sm" data-act="sheetremark" data-pid="'+esc(p.id)+'">Add a remark</button>' : '')+
+      '</div></div>';
+  }).join("")+'</div>';
 }
 
 /* ------------------------------------------------------------ manager home */
@@ -453,18 +566,24 @@ function tabSheet(){
       var chip = pt ? ' <span class="chip '+(pt.status==="open"?"c-amber":pt.status==="awaiting_confirm"?"c-violet":
         (pt.status==="rejected"||pt.status==="disputed_record")?"c-red":pt.status==="carry_forward"?"c-blue":"c-green")+
         '"><span class="d"></span>'+esc(String(pt.status).replace(/_/g," "))+'</span>' : '';
-      var ed = editable && l.src==="manual";
-      var ef = ed ? (D.effects[l.head_key]||"deduct") : lineEff(l);
+      /* the amount of a payroll head is Accounts' and stays locked; what that
+         amount DOES is the vendor manager's choice, on every head alike */
+      var edAmt = editable && l.src==="manual";
+      var edEff = editable;
+      var ef = edEff ? (D.effects[l.head_key]||"deduct") : lineEff(l);
       rows += '<tr><td style="padding-left:26px">'+esc(l.head_label)+
         (l.src==="payroll"?' <span class="lockpill">payroll</span>':'')+chip+
-        (!ed && ef==="note"
+        (!edEff && ef==="note"
           ? '<div style="font-size:12px;color:var(--faint)">recorded only &mdash; does not change the amount</div>'
-          : !ed && ef==="add"
+          : !edEff && ef==="add"
           ? '<div style="font-size:12px;color:var(--muted)">credited to him, not taken off</div>' : '')+'</td>'+
-        '<td class="num">'+(ed
+        '<td class="num">'+(edEff
           ? '<div class="effcell">'+effSelect("draft-eff", l.head_key, ef)+
-            '<input class="inp num" value="'+(D.lines[l.head_key]||0)+
-            '" data-act="draft" data-k="'+esc(l.head_key)+'"></div>'
+            (edAmt
+              ? '<input class="inp num" value="'+(D.lines[l.head_key]||0)+
+                '" data-act="draft" data-k="'+esc(l.head_key)+'">'
+              : '<b class="'+(ef==="deduct"?"":effClass(ef))+'" style="display:inline-block;min-width:150px;text-align:right">'+
+                (ef==="deduct"?"":effSign(ef))+inr(l.amount)+'</b>')+'</div>'
           /* colour marks the exception, not the rule: an ordinary deduction reads
              exactly as it always did, and the eye goes straight to the line that
              is doing something else */
@@ -847,14 +966,25 @@ var PT_CHIP = {
   carry_forward:'<span class="chip c-blue"><span class="d"></span>Carried forward to next month</span>'
 };
 function tabPoints(){
-  var st = S.stmt, pts = st.points||[];
-  if(!pts.length) return '<div class="empty">No points raised on this statement.</div>';
+  var st = S.stmt;
+  /* a general query is about no figure at all and has its own tab; showing it
+     here as "Our figure 0" invited exactly the confusion it was meant to avoid */
+  var pts = (st.points||[]).filter(function(p){ return !isQuery(p); });
+  if(!pts.length) return '<div class="empty">No points raised on any figure on this statement.</div>';
   var out = pts.map(function(p){
     var k = p.status==="open"?"open":p.status==="awaiting_confirm"?"confirm":p.status==="carry_forward"?"cf":"done";
-    var ourV = verByNo(st, p.version_no), our = 0;
+    /* the figure the vendor is actually holding: the one on the version he
+       raised the point against, not the one on the draft we are working on.
+       If that version has gone (it cannot today, but a database is a long-lived
+       thing) fall back to the latest rather than silently showing zero. */
+    var ourV = verByNo(st, p.version_no) || st.versions[st.versions.length-1], our = 0;
     if(ourV){
-      if(p.target_kind==="head") (ourV.lines||[]).forEach(function(l){ if(l.head_key===p.target_key) our = Number(l.amount)||0; });
-      else (ourV.adjustments||[]).forEach(function(a){ if(a.label===p.target_label) our = Number(a.amount)||0; });
+      if(p.target_kind==="gross")
+        our = Number(ourV.gross)||0;
+      else if(p.target_kind==="head")
+        (ourV.lines||[]).forEach(function(l){ if(l.head_key===p.target_key) our = Number(l.amount)||0; });
+      else
+        (ourV.adjustments||[]).forEach(function(a){ if(a.label===p.target_label) our = Number(a.amount)||0; });
     }
     return '<div class="pt '+k+'">'+
       '<div class="pt-h">'+(PT_CHIP[p.status]||"")+
@@ -864,7 +994,9 @@ function tabPoints(){
       '<div class="pt-h" style="margin-bottom:4px"><span class="who">'+esc(p.raised_by)+'</span></div>'+
       '<div class="pt-body">&ldquo;'+esc(p.note)+'&rdquo;</div>'+
       (p.attachment?'<div class="pt-att">&#128206; '+esc(p.attachment)+'</div>':'')+
-      '<div class="pt-figs"><div>Our figure<b>'+inr(our)+'</b></div>'+
+      '<div class="pt-figs"><div>Our figure'+
+        '<span style="display:block;font-size:11px;color:var(--faint);font-weight:400">'+
+        'as shared in v'+p.version_no+'</span><b>'+inr(our)+'</b></div>'+
         (p.claimed!=null?'<div>Vendor says<b>'+inr(p.claimed)+'</b></div>'+
           '<div>Difference<b>'+inr(Number(p.claimed)-our)+'</b></div>':'')+'</div>'+
       (p.confirmed_at && p.status!=="disputed_record"

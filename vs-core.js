@@ -11,6 +11,7 @@ var S = {
   settings:{window_days:5, deemed_approve:true, variance_pct:15},
   vendors:[], sites:[], contracts:[], adjTypes:[], profiles:[], invites:[], audit:[], heads:[],
   period:null, list:[], open:null, stmt:null, tab:"sheet", adminTab:"users",
+  sheet:null, sheetTab:null, sheetPage:null, sheetPeriod:null,
   err:null, draft:null
 };
 
@@ -122,13 +123,14 @@ async function call(fn, args, okMsg, what){
    "new row violates row-level security policy" while attaching a bill.
    So the app asks, once, at sign-in, and says plainly what is missing. */
 var PATCHES = [
-  {file:"VS-PATCH-1.sql", fn:"vs_add_document",     what:"payroll and PF/ESIC file attachments"},
-  {file:"VS-PATCH-2.sql", fn:"vs_sees_site",        what:"keeping each vendor to his own sites"},
-  {file:"VS-PATCH-3.sql", fn:"vs_set_site",         what:"editing a site and its tenures"},
-  {file:"VS-PATCH-5.sql", fn:"vs_raise_query",      what:"queries, vendor uploads and payroll top-ups"},
-  {file:"VS-PATCH-6.sql", fn:"vs_statement_extra",  what:"email notifications and CEO/VP confirmation"},
-  {file:"VS-PATCH-7.sql", fn:"vs_version_spend",    what:"a head crediting him or being recorded without counting"}
-];
+  {file:"VS-DATABASE.sql", fn:"vs_add_document",    what:"payroll and PF/ESIC file attachments"},
+  {file:"VS-DATABASE.sql", fn:"vs_sees_site",       what:"keeping each vendor to his own sites"},
+  {file:"VS-DATABASE.sql", fn:"vs_set_site",        what:"editing a site and its tenures"},
+  {file:"VS-DATABASE.sql", fn:"vs_raise_query",     what:"queries, vendor uploads and payroll top-ups"},
+  {file:"VS-DATABASE.sql", fn:"vs_statement_extra", what:"email notifications and CEO/VP confirmation"},
+  {file:"VS-DATABASE.sql", fn:"vs_version_spend",   what:"a head crediting him or being recorded without counting"},
+  {file:"VS-DATABASE.sql", fn:"vs_sheet_page",     what:"each site's working sheet, and queries on its rows"}
+]
 
 /* Ask PostgREST what functions it actually publishes. This is one read-only
    request that lists every RPC on the project, and it is the only honest way to
@@ -177,11 +179,20 @@ async function checkSchema(){
 
   var gone = PATCHES.filter(function(p){ return !have[p.fn]; });
 
+  /* Patch 8 is the one patch you check by what is NOT there. It takes the
+     free EXECUTE away from the internal helpers, so a database that has had it
+     no longer publishes vs_queue_mail to a signed-in caller. If the catalogue
+     still lists it, anybody with the public key can send mail from the
+     company's own address. */
+  if(have["vs_queue_mail"])
+    gone.push({file:"VS-DATABASE.sql", fn:"",
+      what:"closing the mail relay - until it is run, anybody with the public key can send mail from your address"});
+
   /* patch 4 is a capability row, not a function */
   try{
     var c = await SB.from("vs_caps").select("cap").eq("role","manager").eq("cap","post_payroll");
     if(!c.error && (!c.data || !c.data.length))
-      gone.push({file:"VS-PATCH-4.sql", fn:"", what:"the vendor manager posting payroll"});
+      gone.push({file:"VS-DATABASE.sql", fn:"", what:"the vendor manager posting payroll"});
   }catch(e){}
 
   gone.sort(function(a,b){ return a.file < b.file ? -1 : 1; });
@@ -199,14 +210,14 @@ function schemaBanner(){
       'Some things will refuse to work until WeVois finishes setting it up. If something you try is refused '+
       'with a message that makes no sense, that is why - tell WeVois rather than working around it.</div></div>';
   return '<div class="banner b-red"><div class="ico">&#9888;</div><div>'+
-    '<b>The database is behind this build &mdash; '+g.length+' patch'+(g.length===1?'':'es')+' still to run</b>'+
+    '<b>The database is behind this build</b>'+
     'The screens for these are already here, so they look available and then fail with a database error when '+
-    'somebody uses them. Open the Supabase SQL editor and run each file below, whole, in order:'+
+    'somebody uses them. Open the Supabase SQL editor and run <b>VS-DATABASE.sql</b>, the whole file. '+
+    'It is safe to run on a database that already has data &mdash; it changes none of it. Missing:'+
     '<ul style="margin:8px 0 0 18px;padding:0">'+
-    g.map(function(p){ return '<li style="margin:2px 0"><b>'+esc(p.file)+'</b> &mdash; '+esc(p.what)+'</li>'; }).join("")+
+    g.map(function(p){ return '<li style="margin:2px 0">'+esc(p.what)+'</li>'; }).join("")+
     '</ul><div style="margin-top:8px;font-size:12.5px;opacity:.85">This is read from the list of functions your '+
-    'project actually publishes. If you believe a file has already been run, run <b>VS-CHECK-PATCHES.sql</b> in '+
-    'the SQL editor &mdash; it answers the same question from inside the database.</div></div></div>';
+    'project actually publishes. VS-DATABASE.sql prints a health check of its own at the end.</div></div></div>';
 }
 
 /* ---------------------------------------------------------------- loading */
@@ -281,13 +292,55 @@ async function refresh(keepOpen){
 
 /* ---------------------------------------------------------------- derived */
 function curVer(st){ return st.versions[st.versions.length-1]; }
+/* ------------------------------------------------- the site's working sheet
+
+   The duty log, the day counts and every penalty with its proof - the sheet
+   the office already keeps, mirrored here so the vendor can see where the
+   month's figure came from and put a question on any row or column of it. */
+async function loadSheet(siteId){
+  S.sheet = await rpc("vs_site_sheet", {p_site: siteId}, "opening the sheet...");
+  S.sheetTab = null; S.sheetPage = null; S.sheetPeriod = null;
+  var tabs = (S.sheet && S.sheet.tabs) || [];
+  if(tabs.length) await loadSheetTab(tabs[0].id);
+}
+async function loadSheetTab(tabId, period){
+  S.sheetTab = tabId;
+  S.sheetPeriod = period === undefined ? S.sheetPeriod : period;
+  S.sheetPage = await rpc("vs_sheet_page",
+    {p_tab: tabId, p_period: S.sheetPeriod ? S.sheetPeriod + "-01" : null}, "reading...");
+}
+/* the months a tab holds, newest first */
+function sheetMonths(tab){
+  var m = ((tab && tab.periods) || []).slice().filter(Boolean);
+  m.sort(); m.reverse(); return m;
+}
+function sheetTabById(id){
+  var t = (S.sheet && S.sheet.tabs) || [];
+  for(var i=0;i<t.length;i++) if(t[i].id === id) return t[i];
+  return null;
+}
+/* what the sheet shows, formatted the way the sheet shows it. A figure that
+   carries a comma is a figure; anything else is text and is left alone. */
+function sheetCell(col, v){
+  if(v === null || v === undefined || v === "") return '<span style="color:var(--faint)">&mdash;</span>';
+  if(col.kind === "money"){
+    var n = Number(String(v).replace(/,/g, ""));
+    if(!isNaN(n) && String(v).trim() !== "") return inr(n);
+  }
+  return esc(String(v));
+}
+
 function verByNo(st,n){
   for(var i=0;i<st.versions.length;i++) if(st.versions[i].v===n) return st.versions[i];
   return null;
 }
 function openPoints(st){
   var n=0;
-  (st.points||[]).forEach(function(p){ if(p.status==="open"||p.status==="awaiting_confirm") n++; });
+  /* general queries are counted by openQueries on their own tab; counting them
+     here too made the same question show up twice */
+  (st.points||[]).forEach(function(p){
+    if(p.target_kind==="general") return;
+    if(p.status==="open"||p.status==="awaiting_confirm") n++; });
   return n;
 }
 function pendingChanges(st){

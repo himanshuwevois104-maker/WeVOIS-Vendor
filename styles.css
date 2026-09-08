@@ -281,3 +281,27 @@ input[type=file].inp::file-selector-button:hover{background:var(--surface-2);bor
   .effcell{flex-wrap:wrap}
   .effcell .eff{flex:1 1 100%;max-width:none}
 }
+
+/* ------------------------------------------------- the site's working sheet
+   These tabs are wide - the duty log runs to twenty-odd columns - so the table
+   scrolls inside its own box rather than pushing the page sideways. */
+.sheetwrap{overflow-x:auto;border:1px solid var(--line-2);border-radius:var(--radius)}
+table.sheet{border-collapse:collapse;width:max-content;min-width:100%;font-size:12.5px}
+table.sheet th{position:sticky;top:0;background:var(--panel-2,#f7f8fa);text-align:left;
+  font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);
+  font-weight:650;padding:8px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+table.sheet td{padding:7px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+table.sheet td.num,table.sheet th.num{text-align:right;font-variant-numeric:tabular-nums}
+table.sheet tbody tr:hover{background:var(--hover,#fafbfc)}
+
+/* a row somebody has an open question on */
+table.sheet tr.rowq td{background:var(--amber-soft,#fff8e6)}
+/* a row that has left the sheet: kept, because a question may hang off it */
+table.sheet tr.rowgone td{opacity:.55;text-decoration:line-through}
+table.sheet tr.rowgone-n td{opacity:1;text-decoration:none;font-size:11.5px;
+  color:var(--muted);background:var(--panel-2,#f7f8fa);white-space:normal}
+
+.rowq-b,.colq{border:1px solid var(--line-2);background:transparent;color:var(--muted);
+  border-radius:5px;width:20px;height:20px;line-height:1;font-size:11px;font-weight:700;
+  cursor:pointer;padding:0}
+.rowq-b:hover,.colq:hover{border-color:var(--blue);color:var(--blue)}

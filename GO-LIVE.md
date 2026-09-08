@@ -35,124 +35,84 @@ head_template | adjustment_types | capability_rows | people | vendors | settleme
 
 If you see that, the database is built.
 
-### 3. Load your sites and booking heads
+### 3. Build the database
 
-New query. Paste and run `VS-SEED-ALL.sql`.
+Supabase dashboard -> **SQL Editor** -> **New query**. Open `VS-DATABASE.sql`, select the
+whole file, paste it in, press **Run**.
 
-This creates your ten sites — Kuchaman, Parbatsar, Nawa, Bundi, Vidhisa, Dei, Laxmangarh, Jhunjhunu, Chirawa, Sujalpur — each with **its own booking heads exactly as they appear in your workbook**. Chirawa keeps R&M split into "by Kishan ji" and "by WeVois". Bundi keeps loader-and-tractor fuel and the rent of five tractors. Jhunjhunu keeps parking rent. Sujalpur keeps water and building rent. It also creates the four vendors named in your file: Heera Ram ji, Kishan Ji, Shubham Ji and Firoz.
+That is the whole step. One file, everything in it, in the right order:
 
-It prints a head count per site. Check it against your sheets.
+- the schema - tables, row-level security, and the functions every write goes through
+- file attachments, the workbook importer, the manager releasing a payment
+- each vendor seeing only his own sites
+- editing a site, its start and closing dates, and its tenures
+- the vendor manager posting the payroll himself
+- queries, vendor file uploads, points on the earned amount, payroll top-ups
+- email when a month goes out, and confirmation from the CEO or the VP
+- a head that credits the partner, or is recorded without being counted - on every
+  head, payroll ones included. The amount of a payroll head is still Accounts',
+  but what that amount does is the vendor manager's: the employee's own PF and
+  ESIC share is money taken from his men rather than spent by the company, and
+  some months it belongs on the sheet as a record and not as a deduction
+- the security lock-down: only a signed-in person can reach anything
 
-### 3b. Run the patch
+**It does not touch your data.** Every table is created only if it is missing and every
+seed row is inserted only if it is not there. Statements already shared with vendors,
+their replies, your points, payments and the audit log all stay exactly as they are. Run
+it again whenever you like - on a database that is already up to date it changes nothing.
 
-New query. Paste and run `VS-PATCH-1.sql`. It adds three things: the vendor manager can record
-payments as well as Accounts, statements can carry attached payroll / PF / ESIC files, and the
-importer that loads your history. It ends by printing `1 | 1 | 1 | 1`.
+It ends by printing a health check. Every line should read **OK**, and the last few lines
+count your own data back to you so you can see nothing moved.
 
-### 3c. Run the second patch
+### 3b. On the security line
 
-New query. Paste and run `VS-PATCH-2.sql`. It closes a hole in which a vendor could read
-other vendors' sites, months and figures. It changes no data and is safe to re-run. It ends
-by printing `t | t | t | t`.
+The key in `supabase-config.js` is the **anon** key. It is public by design: it ships in
+every browser that opens the portal. That is fine only because every function refuses a
+caller with no profile.
 
-Worth knowing what it was, because it says something about where these things hide. The
-row-level policies were correct from the start: reading the tables directly, a vendor already
-saw only his own. But several reader functions are `SECURITY DEFINER` - that is what lets them
-do the joins and the arithmetic without every caller needing rights on every table - and inside
-such a function row-level security does not apply. They never asked who was calling.
-`vs_list_statements`, which fills the home screen, was handing every settlement in the company
-to whoever asked, including an account with no invitation at all. Nine functions now check.
+PostgreSQL grants EXECUTE on a new function to PUBLIC automatically, so for a while that
+was not quite true. `vs_queue_mail` - an internal helper that `vs_share` and the approval
+functions call - had no permission check of its own, because nothing was ever supposed to
+reach it from outside. Something could. A stranger holding the public key could post to
+`/rest/v1/rpc/vs_queue_mail` with any address, subject and HTML, and the mail sender would
+have delivered it **from your office Gmail**. That was proved by doing it; the row landed
+in the outbox.
 
-### 3d. Run the third patch
+The last part of `VS-DATABASE.sql` takes the free EXECUTE away from every `vs_` function,
+gives `anon` back only `vs_needs_setup`, leaves the internal helpers granted to nobody, and
+puts a real check inside each of them as well. Afterwards exactly **one** function is
+reachable without signing in, and the health check says so.
 
-New query. Paste and run `VS-PATCH-3.sql`. It lets you edit a site and a tenure after
-creating them, which you previously could not do at all: a misspelt site name was
-permanent, and a tenure's start date could never be corrected. It ends by printing
-`t | t | t | t | t`.
+### 3c. Each site's working sheet
 
-It also gives a site its own life, separate from who runs it - the day WeVois started
-there and the day it closed. A closed site takes no vendor and no month can be opened
-for it, while everything already settled stays readable.
+The last part of `VS-DATABASE.sql` adds the site sheets: the month totals, every
+penalty with its proof, the day counts and the duty log, mirrored from the sheet
+your office already keeps, with a question raisable on **any row or any column**.
 
-### 3e. Run the fourth patch
+Nothing writes back to Google. The sheet stays the operating tool; the portal
+becomes the record of the conversation about it.
 
-New query. Paste and run `VS-PATCH-4.sql`. It lets the vendor manager post and correct
-the processed salary, PF and ESIC, which only Accounts could do before. It ends by
-printing `1 | 1 | 0 | 9`.
+Read **SHEETS-SYNC.md** for the two steps: connect a sheet to a site, and paste
+a small script into that sheet so it pushes itself to the portal every hour. No
+Google service account and no new Google project are needed.
 
-The gate itself is unchanged: a statement still cannot go to a vendor until the payroll
-is posted. What changes is that you can satisfy it yourself instead of waiting. The
-challan numbers stay compulsory, a figure for salary not processed still needs a written
-reason, a correction after sharing still parks itself until you issue a new version, and
-the record names whoever actually posted it. The CEO, the VP and the vendor are still
-refused.
+Three things worth knowing before you look at it:
 
-### 3f. Run the fifth patch
+- **A row is never deleted.** When a sync no longer finds a row it is marked as
+  gone and kept, because a vendor may have a question hanging off it and he is
+  entitled to see what he was looking at when he asked.
+- **Rows are matched on their own values, not their position.** The sheet gets
+  re-sorted all day; a question asked on the 1-June ₹300 penalty must still be
+  on that penalty tomorrow, not on whatever slid into row 14.
+- **A vendor sees only the sites he holds.** That is the same rule the rest of
+  the portal runs on, enforced by the database.
 
-New query. Paste and run `VS-PATCH-5.sql`. It ends by printing six `t`s. It adds:
+### 3d. Note for later
 
-- a point can be raised on the **earned amount** itself, not just on an expense head
-  or an adjustment line, and an accepted one moves that figure in the next version
-- a **Queries** tab for anything that is not a figure on the sheet, answered in
-  writing, with remarks from either side. Raising one does *not* hold up the money
-- the **vendor can attach his own files** to his own statement, and take back only
-  what he put up himself
-- **salary processed late** goes on as its own entry with its own challan and date,
-  added to the month rather than written over it
-
-### 3g. Run the sixth patch
-
-New query. Paste and run `VS-PATCH-6.sql`. It ends by printing six `t`s. It adds:
-
-- **email when a month goes out.** Sharing a statement, or issuing a revised version,
-  writes mail for that site's vendor and for the CEO and the VP. A vendor is only ever
-  told about his own sites; the observers are told about all of them.
-- **confirmation from the CEO or the VP.** You put a question, or a figure, to them
-  from a statement. If a request carries an amount and they confirm it, that line is
-  written onto the statement with their name and the date as its reason.
-
-Then read **SETUP-MAIL.md** and follow it, so the mail actually leaves. Until you do,
-every message is still written down and visible in **Administration > Mail** - nothing
-is lost, it just waits.
-
-On the second one, know what it changes: the CEO and the VP have been strict observers,
-every write refused. They now get exactly one thing they can do - answer a request that
-was put to them - and they are still refused everything else, including raising the
-request themselves. Somebody has to ask before they can answer.
-
-### 3h. Run the seventh patch
-
-New query. Paste and run `VS-PATCH-7.sql`. It ends by printing one row saying every line
-already in the database still reduces the payment, which is what it was before. It adds:
-
-- **each booking head now says what it does to the amount.** Three choices, the same
-  three the adjustment lines under the Total have always had: *reduces payment* (money
-  WeVois spent for him, taken off - what every head did until now, and what every head
-  still does unless somebody changes it), *credits him* (added to what we pay instead of
-  taken off), and *recorded only* (on the statement with its figure, and not counted -
-  the payment-record case, so a line that has to be shown is not counted twice).
-- **the vendor manager chooses it on the draft**, in a box beside the amount. It saves
-  the moment he picks, and the figures below redraw from the database, not from the
-  browser.
-- **the administrator sets the site's standing choice** under **Sites & heads**, so a
-  head that is always a credit at one site is not re-chosen every month.
-- **payroll heads are not offered the choice.** Those figures come from the PF, ESIC and
-  bank files, and money that has left the company for his men is a deduction. An
-  exception to a payroll figure belongs in an adjustment line, where it already can go.
-- **cost per vehicle now follows the spend, not the net.** They are the same number only
-  while every head is a deduction. A credit back to the partner is not a cost of running
-  his site, and the memo exists to compare one site's running cost with another's.
-
-Nothing that has already gone to a vendor changes. Every line that exists is written as
-*reduces payment*, which is exactly what it was, so every historical Final amount stands
-to the rupee - the patch prints that count so you can see it for yourself.
-
-### 3i. Note for later
-
-`VS-IMPORT-HISTORY.sql` loads your whole spreadsheet history, but it cannot run yet.
-It writes through the same functions the app uses, and those refuse anybody who is not a
-signed-in user with the right role - the SQL editor is nobody. So it waits until step 8,
-when the first administrator exists. It is step 10b below.
+`VS-IMPORT-HISTORY.sql` loads your whole spreadsheet history, but it cannot run yet. It
+writes through the same functions the app uses, and those refuse anybody who is not a
+signed-in user with the right role - the SQL editor is nobody. So it waits until the first
+administrator exists. It is step 10b below.
 
 ### 4. Turn off email confirmation
 
