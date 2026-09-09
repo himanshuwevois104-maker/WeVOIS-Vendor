@@ -11,7 +11,7 @@ var S = {
   settings:{window_days:5, deemed_approve:true, variance_pct:15},
   vendors:[], sites:[], contracts:[], adjTypes:[], profiles:[], invites:[], audit:[], heads:[],
   period:null, list:[], open:null, stmt:null, tab:"sheet", adminTab:"users",
-  sheet:null, sheetTab:null, sheetPage:null, sheetPeriod:null, sheets:[], allCaps:null,
+  sheet:null, sheetTab:null, sheetPage:null, sheetPeriod:null,
   err:null, draft:null
 };
 
@@ -238,33 +238,6 @@ async function loadAll(){
   S.adjTypes = q[4].data||[];
   S.heads    = q[5].data||[];
   S.list     = q[6].data||[];
-
-  /* which sites have a working sheet connected, and how much of it is here.
-     A database that has not had the site-sheets part of VS-DATABASE.sql run
-     yet simply has none, and that must not stop the rest of the app loading. */
-  if(can("view_all")){
-    try{
-      var sh = await Promise.all([
-        SB.from("vs_sheets").select("*"),
-        SB.from("vs_sheet_tabs").select("id,sheet_id,tab_key,label,synced_at")
-      ]);
-      S.sheets = (sh[0].data||[]).map(function(x){
-        x.tabs = (sh[1].data||[]).filter(function(t){ return t.sheet_id === x.id; });
-        return x;
-      });
-    }catch(e){ S.sheets = []; }
-
-    /* the whole capability matrix, so the screen that claims the database
-       enforces it can show what the database actually says */
-    try{
-      var ac = await SB.from("vs_caps").select("role,cap");
-      if(ac.data && ac.data.length){
-        var m = {};
-        ac.data.forEach(function(r){ (m[r.role] = m[r.role] || []).push(r.cap); });
-        S.allCaps = m;
-      }
-    }catch(e){}
-  }
 
   if(can("manage_users")){
     var p = await Promise.all([
